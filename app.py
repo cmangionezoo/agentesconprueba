@@ -38,7 +38,8 @@ from openai import OpenAI, AzureOpenAI
 from services import (
     agent_service, conversation_service, ucontact_service, usuarios_service,
     conexiones_service, crypto_service, proveedores_nube,
-    sincronizacion_service, tipificador_service
+    sincronizacion_service, tipificador_service,
+    agentes_service, enrutador_service
 )
 from services.tipificador_service import ErrorTipificacion
 from services.mock_client import MockClient
@@ -105,6 +106,8 @@ ucontact_service.init_tablas()
 usuarios_service.init_tablas()
 
 conexiones_service.init_tablas()
+
+agentes_service.init_tablas(agent_service.PRODUCTOS)
 
 # Administrador inicial (se define en Render con ADMIN_USUARIO y ADMIN_CLAVE)
 _resultado_admin = usuarios_service.asegurar_admin(
@@ -896,6 +899,61 @@ def procesar_documento(doc_id, ruta_pdf):
 # ============================================================
 
 # ============================================================
+# ATENCIÓN CON AGENTES POR PRODUCTO Y TIPIFICACIÓN
+# ============================================================
+
+def atender_con_agentes(
+    producto, mensaje, historial, estado_previo, conversacion_id,
+    incluir_pendientes, ignorar_pausa_recepcion=False
+):
+    """
+    Recibe la consulta con el agente de recepción del producto y, cuando la
+    clasifica, la pasa al especialista de esa categoría (si existe y está
+    activo). Devuelve el resultado del agente que terminó respondiendo.
+    """
+
+    documentos = documentos_para_vista()
+
+    agente_id, reasignaciones = conversation_service.agente_de(conversacion_id)
+
+    def responder(contexto_agente, estado):
+
+        return agent_service.responder(
+            client=client,
+            modelo=MODELO_AGENTE,
+            documentos=documentos,
+            historial=historial,
+            mensaje=mensaje,
+            estado_previo=estado,
+            incluir_pendientes=incluir_pendientes,
+            producto=producto,
+            agente=contexto_agente
+        )
+
+    return enrutador_service.atender(
+        responder, producto, estado_previo,
+        agente_id=agente_id, reasignaciones=reasignaciones,
+        ignorar_pausa_recepcion=ignorar_pausa_recepcion
+    )
+
+
+def agentes_con_metricas():
+    """Lista de agentes con sus números, para la pantalla Agentes."""
+
+    numeros = conversation_service.metricas_por_agente_id()
+
+    vacio = {
+        "total": 0, "resueltas": 0, "derivadas": 0, "en_curso": 0,
+        "pasadas": 0, "pct_resueltas": "—", "pct_derivadas": "—",
+    }
+
+    return [
+        dict(agente, **numeros.get(agente["id"], vacio))
+        for agente in agentes_service.listar()
+    ]
+
+
+# ============================================================
 # TIPIFICACIÓN AUTOMÁTICA Y SINCRONIZACIÓN
 # ============================================================
 
@@ -1620,6 +1678,8 @@ def _datos_resumen():
         "resumen": conversation_service.resumen_rapido(),
         "pausado": agente_pausado(),
         "docs_vigentes": vigentes,
+        "agentes": agentes_con_metricas(),
+        "categorias_agente": tipificador_service.CATEGORIAS,
     }
 
 
@@ -1631,6 +1691,84 @@ def home():
 @app.route("/agentes")
 def agentes():
     return render_seccion("agentes", **_datos_resumen())
+
+
+@app.route("/agentes/crear", methods=["POST"])
+@solo_admin
+def agentes_crear():
+
+    error = agentes_service.crear(
+        request.form.get("nombre", ""),
+        request.form.get("producto", ""),
+        request.form.get("categoria", ""),
+        request.form.get("instrucciones", ""),
+        agent_service.PRODUCTOS,
+        tipificador_service.CATEGORIAS
+    )
+
+    flash(error or "Agente creado. Ya recibe los casos de esa categoría.")
+
+    return redirect(url_for("agentes") + "#agentesLista")
+
+
+@app.route("/agentes/<int:agente_id>/editar", methods=["POST"])
+@solo_admin
+def agentes_editar(agente_id):
+
+    error = agentes_service.actualizar(
+        agente_id,
+        request.form.get("nombre", ""),
+        request.form.get("instrucciones", "")
+    )
+
+    flash(error or "Agente actualizado.")
+
+    return redirect(url_for("agentes") + "#agentesLista")
+
+
+@app.route("/agentes/<int:agente_id>/estado", methods=["POST"])
+@solo_admin
+def agentes_estado(agente_id):
+
+    agente = agentes_service.obtener(agente_id)
+
+    if not agente:
+
+        flash("No se encontró el agente.")
+
+    else:
+
+        agentes_service.cambiar_activo(agente_id, not agente["activo"])
+
+        if agente["activo"]:
+
+            flash(
+                f"«{agente['nombre']}» pausado: "
+                + (
+                    "en WhatsApp ese producto ya no responde (el flujo de "
+                    "uContact tiene que seguir con una persona)."
+                    if not agente["categoria"] else
+                    "los casos de esa categoría los resuelve el agente de "
+                    "recepción del producto."
+                )
+            )
+
+        else:
+
+            flash(f"«{agente['nombre']}» activado.")
+
+    return redirect(url_for("agentes") + "#agentesLista")
+
+
+@app.route("/agentes/<int:agente_id>/eliminar", methods=["POST"])
+@solo_admin
+def agentes_eliminar(agente_id):
+
+    error = agentes_service.eliminar(agente_id)
+
+    flash(error or "Agente eliminado.")
+
+    return redirect(url_for("agentes") + "#agentesLista")
 
 
 @app.route("/agentes/pausar", methods=["POST"])
@@ -2202,15 +2340,19 @@ def playground_chat():
 
     try:
 
-        resultado = agent_service.responder(
-            client=client,
-            modelo=MODELO_AGENTE,
-            documentos=documentos_para_vista(),
-            historial=datos.get("historial"),
+        # El Playground usa el mismo recorrido que WhatsApp (recepción ->
+        # especialista), pero puede probar un producto aunque su agente de
+        # recepción esté pausado.
+        resultado = atender_con_agentes(
+            producto=agent_service.normalizar_producto(
+                datos.get("producto"), agent_service.PRODUCTO
+            ),
             mensaje=mensaje,
+            historial=agent_service._limpiar_historial(datos.get("historial")),
             estado_previo=datos.get("estado"),
+            conversacion_id=str(datos.get("conversacion_id") or ""),
             incluir_pendientes=bool(datos.get("incluir_pendientes", True)),
-            producto=datos.get("producto")
+            ignorar_pausa_recepcion=True
         )
 
     except Exception as e:
@@ -2305,7 +2447,7 @@ def _rechazo_ucontact():
 
 
 def _payload_ucontact(conversacion_id, producto, respuesta, estado,
-                      resumen, derivar, destino, motivo):
+                      resumen, derivar, destino, motivo, agente_nombre=""):
 
     etapa = estado.get("etapa", "") if estado else ""
 
@@ -2329,7 +2471,8 @@ def _payload_ucontact(conversacion_id, producto, respuesta, estado,
         "etapa": etapa,
         "categoria": (estado or {}).get("categoria", ""),
         "subcategoria": (estado or {}).get("subcategoria", ""),
-        "resumen_tecnico": resumen
+        "resumen_tecnico": resumen,
+        "agente": agente_nombre
     }
 
 
@@ -2410,6 +2553,21 @@ def ucontact_mensaje():
             "error": "El agente está pausado."
         })
 
+    # Agente de recepción de este producto pausado
+    recepcion = agentes_service.obtener_base(producto)
+
+    if recepcion and not recepcion["activo"]:
+
+        return jsonify({
+            "ok": True,
+            "accion": "fuera_de_alcance",
+            "pausado": True,
+            "respuesta": "",
+            "derivar": False,
+            "cola": "",
+            "error": f"El agente de {producto} está pausado."
+        })
+
     sesion = ucontact_service.buscar_sesion(external_id)
 
     # Conversación ya derivada: no se vuelve a llamar a la IA
@@ -2445,15 +2603,13 @@ def ucontact_mensaje():
 
     try:
 
-        resultado = agent_service.responder(
-            client=client,
-            modelo=MODELO_AGENTE,
-            documentos=documentos_para_vista(),
-            historial=historial,
+        resultado = atender_con_agentes(
+            producto=producto,
             mensaje=mensaje,
+            historial=historial,
             estado_previo=estado_previo,
-            incluir_pendientes=WHATSAPP_INCLUIR_PENDIENTES,
-            producto=producto
+            conversacion_id=conversacion_id,
+            incluir_pendientes=WHATSAPP_INCLUIR_PENDIENTES
         )
 
     except Exception as e:
@@ -2495,7 +2651,8 @@ def ucontact_mensaje():
     payload = _payload_ucontact(
         conversacion_id, producto, resultado["respuesta"], estado,
         resultado.get("resumen_tecnico"), deriv.get("derivar"),
-        deriv.get("destino"), deriv.get("motivo")
+        deriv.get("destino"), deriv.get("motivo"),
+        agente_nombre=(resultado.get("agente") or {}).get("nombre", "")
     )
 
     ucontact_service.guardar_respuesta(external_id, message_id, payload)
@@ -2831,6 +2988,7 @@ def health():
         "conexiones_cifrado_ok": crypto_service.disponible(),
         "conexiones_clave_origen": crypto_service.origen_de_la_clave(),
         "agente_pausado": agente_pausado(),
+        "agentes_activos": sum(1 for x in agentes_service.listar() if x["activo"]),
         "sync_intervalo_min": SYNC_INTERVALO_MIN,
         "whatsapp_incluye_pendientes": WHATSAPP_INCLUIR_PENDIENTES,
         "productos": agent_service.PRODUCTOS,
