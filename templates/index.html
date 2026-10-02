@@ -6,12 +6,52 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {% if hay_procesando %}
     <script>
-        // Se actualiza sola mientras se procesan PDFs, salvo que estés
-        // armando una carga (para no perder los archivos elegidos).
-        setTimeout(function () {
-            if (!(window.upArchivos && window.upArchivos.length)) {
-                window.location.reload();
+        // Mientras se procesan PDFs la página se actualiza sola, pero NUNCA
+        // mientras estás trabajando: con una ventana abierta (editar, ver,
+        // cargar), con un campo en edición o con datos escritos sin enviar.
+        window.paginaOcupada = function () {
+
+            if (window.upArchivos && window.upArchivos.length) { return true; }
+
+            var modales = document.querySelectorAll(".modal");
+
+            for (var i = 0; i < modales.length; i++) {
+                if (window.getComputedStyle(modales[i]).display !== "none") { return true; }
             }
+
+            var carga = document.getElementById("uploadForm");
+
+            if (carga && window.getComputedStyle(carga).display !== "none") { return true; }
+
+            var filas = document.querySelectorAll('[id^="conEditar"]');
+
+            for (var k = 0; k < filas.length; k++) {
+                if (window.getComputedStyle(filas[k]).display !== "none") { return true; }
+            }
+
+            var activo = document.activeElement;
+
+            if (activo && /^(INPUT|TEXTAREA|SELECT)$/.test(activo.tagName)) { return true; }
+
+            var campos = document.querySelectorAll(
+                "input[type=text], input[type=password], textarea"
+            );
+
+            for (var n = 0; n < campos.length; n++) {
+                if (campos[n].value !== campos[n].defaultValue) { return true; }
+            }
+
+            var archivos = document.querySelectorAll("input[type=file]");
+
+            for (var m = 0; m < archivos.length; m++) {
+                if (archivos[m].files && archivos[m].files.length) { return true; }
+            }
+
+            return false;
+        };
+
+        setInterval(function () {
+            if (!window.paginaOcupada()) { window.location.reload(); }
         }, 10000);
     </script>
     {% endif %}
@@ -2145,6 +2185,7 @@
              onclick="cerrarEditar()">
 
             <div class="modal-content"
+                 style="height:auto; max-height:90vh; max-width:780px;"
                  onclick="event.stopPropagation()">
 
                 <div class="modal-header">
@@ -2161,7 +2202,9 @@
 
                 <div class="modal-body">
 
-                    <form id="editForm" method="POST">
+                    <form id="editForm"
+                          method="POST"
+                          onsubmit="var b = document.getElementById('editGuardar'); b.disabled = true; b.textContent = 'Guardando...'; return true;">
 
                         <div class="grid">
 
@@ -2235,7 +2278,7 @@
 
                         <div class="buttons">
                             <button type="button" class="secondary" onclick="cerrarEditar()">Cancelar</button>
-                            <button type="submit" class="primary">Guardar</button>
+                            <button type="submit" class="primary" id="editGuardar">Guardar</button>
                         </div>
 
                     </form>
@@ -3908,6 +3951,11 @@
         poner("editEstado", estado);
         poner("editFuente", fuente);
         poner("editDescripcion", descripcion);
+
+        var guardar = document.getElementById("editGuardar");
+
+        guardar.disabled = false;
+        guardar.textContent = "Guardar";
 
         document.getElementById("editModal").style.display = "block";
     }
