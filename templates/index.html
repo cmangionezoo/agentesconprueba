@@ -860,7 +860,7 @@
                 Definí qué debe intentar lograr durante una conversación.
             </p>
 
-            <textarea>Atender consultas técnicas de primer nivel sobre Dragonfish, comprender el problema del usuario, realizar un diagnóstico guiado utilizando procedimientos documentados, proponer una solución y validar el resultado. Si el problema no puede resolverse en L1, debe derivarlo al equipo correspondiente con un resumen técnico del caso.</textarea>
+            <textarea>Atender consultas de primer nivel sobre Dragonfish, sean errores, dudas sobre cómo hacer algo o pedidos de información. Comprender qué necesita el cliente, responder o guiar con procedimientos documentados y validar el resultado. Si la consulta no puede resolverse en L1, debe derivarla al equipo correspondiente con un resumen técnico del caso.</textarea>
 
         </div>
 
@@ -2096,7 +2096,7 @@
 
         <div class="card">
 
-            <h3>Problemas sin documentación</h3>
+            <h3>Consultas sin documentación</h3>
 
             <p class="muted">
                 Casos derivados a MDA o donde el agente nunca encontró un
@@ -2108,7 +2108,7 @@
                     <thead>
                         <tr>
                             <th>Categoría</th>
-                            <th>Problema informado</th>
+                            <th>Consulta del cliente</th>
                             <th>Destino</th>
                         </tr>
                     </thead>
@@ -2138,7 +2138,7 @@
                     <thead>
                         <tr>
                             <th>Categoría</th>
-                            <th>Problema informado</th>
+                            <th>Consulta del cliente</th>
                             <th>Intentos</th>
                             <th>Destino</th>
                             <th>Motivo</th>
@@ -2174,7 +2174,7 @@
                             <th>Fecha</th>
                             <th>Canal</th>
                             <th>Categoría</th>
-                            <th>Problema</th>
+                            <th>Consulta</th>
                             <th>Estado</th>
                             <th>Mensajes</th>
                             <th>Acciones</th>
@@ -2309,6 +2309,10 @@
                             onclick="pgEjemplo('No me están entrando los pedidos de Tienda Nube a Dragonfish.')">
                         Ejemplo: Tienda Nube
                     </button>
+                    <button type="button" class="pg-chip"
+                            onclick="pgEjemplo('¿Qué módulos necesito para integrar Tienda Nube?')">
+                        Ejemplo: consulta de información
+                    </button>
                 </div>
 
                 <div id="pgChat" class="pg-chat"></div>
@@ -2366,7 +2370,7 @@
 
             var PG_SALUDO =
                 "Hola, soy el asistente técnico de Dragonfish. " +
-                "¿Cuál es el problema que estás teniendo?";
+                "¿En qué te puedo ayudar?";
 
             var pgHistorial = [];
             var pgEstado = null;
@@ -2457,7 +2461,7 @@
                 cont.appendChild(pgFila("Categoría", estado.categoria));
                 cont.appendChild(pgFila("Subcategoría", estado.subcategoria));
                 cont.appendChild(pgFila("Etapa", estado.etapa));
-                cont.appendChild(pgFila("Problema informado", estado.problema_informado));
+                cont.appendChild(pgFila("Consulta del cliente", estado.problema_informado));
                 cont.appendChild(pgFila("Información recopilada", estado.informacion_recopilada));
                 cont.appendChild(pgFila("Información que falta", estado.informacion_faltante));
                 cont.appendChild(pgFila("Diagnóstico", estado.diagnostico));
@@ -2521,7 +2525,7 @@
                 cont.appendChild(pgFila("Producto", resumen.producto));
                 cont.appendChild(pgFila("Categoría", resumen.categoria));
                 cont.appendChild(pgFila("Subcategoría", resumen.subcategoria));
-                cont.appendChild(pgFila("Problema informado", resumen.problema_informado));
+                cont.appendChild(pgFila("Consulta del cliente", resumen.problema_informado));
                 cont.appendChild(pgFila("Información recopilada", resumen.informacion_recopilada));
                 cont.appendChild(pgFila("Diagnóstico", resumen.diagnostico));
                 cont.appendChild(pgFila("Procedimientos realizados", resumen.procedimientos_realizados));
