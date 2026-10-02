@@ -4,7 +4,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    {% if hay_procesando %}<meta http-equiv="refresh" content="10">{% endif %}
+    {% if hay_procesando %}
+    <script>
+        // Se actualiza sola mientras se procesan PDFs, salvo que estés
+        // armando una carga (para no perder los archivos elegidos).
+        setTimeout(function () {
+            if (!(window.upArchivos && window.upArchivos.length)) {
+                window.location.reload();
+            }
+        }, 10000);
+    </script>
+    {% endif %}
 
 <title>Zoo Logic AI Agents</title>
 
@@ -564,6 +574,36 @@
 
     </div>
 
+    {% if usuario_actual and usuario_actual.id %}
+    <div class="menu" style="margin-top:20px;">
+
+        <div class="menu-title">Administración</div>
+
+        {% if usuario_actual.rol == "admin" %}
+        <a href="/usuarios"
+           class="{% if section == 'usuarios' %}active{% endif %}">
+            👥 Usuarios
+        </a>
+        {% endif %}
+
+        <a href="/cuenta"
+           class="{% if section == 'cuenta' %}active{% endif %}">
+            🔑 Mi cuenta
+        </a>
+
+    </div>
+
+    <form method="POST" action="/logout" style="margin-top:20px; padding:0 12px;">
+        <div class="menu-title" style="padding:0 0 8px;">
+            Sesión: {{ usuario_actual.usuario }}
+        </div>
+        <button type="submit"
+                style="background:#1f2937; color:#d1d5db; width:100%;">
+            Salir
+        </button>
+    </form>
+    {% endif %}
+
 </aside>
 
 
@@ -585,6 +625,10 @@
             <h1>Métricas</h1>
         {% elif section == "playground" %}
             <h1>Playground</h1>
+        {% elif section == "usuarios" %}
+            <h1>Usuarios</h1>
+        {% elif section == "cuenta" %}
+            <h1>Mi cuenta</h1>
         {% else %}
             <h1>Inicio</h1>
         {% endif %}
@@ -1237,7 +1281,8 @@
                 </div>
 
                 <button class="primary"
-                        onclick="document.getElementById('uploadForm').style.display='block'">
+                        type="button"
+                        onclick="upAbrir()">
                     + Agregar documento
                 </button>
 
@@ -1430,174 +1475,314 @@
              id="uploadForm"
              style="display:none;">
 
-            <h2>Agregar documento</h2>
+            <h2>Agregar documentos</h2>
 
             <p class="muted">
-                Incorporá uno o varios documentos PDF a la Knowledge Base.
+                Elegí uno o varios PDFs (hasta {{ max_pdfs }} por vez). Cada
+                archivo toma su nombre automáticamente y se configura por
+                separado más abajo.
             </p>
 
             <form action="/knowledge/upload"
                   method="POST"
-                  enctype="multipart/form-data">
+                  enctype="multipart/form-data"
+                  onsubmit="return upEnviar(this)">
 
-                <div class="grid">
+                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
 
-                    <div>
+                    <button type="button"
+                            class="secondary"
+                            onclick="document.getElementById('upInput').click()">
+                        📎 Seleccionar PDFs
+                    </button>
 
-                        <label>Archivos PDF</label>
-
-                        <input type="file"
-                               name="archivo"
-                               accept=".pdf"
-                               multiple
-                               required>
-
-                        <p class="muted" style="margin:6px 0 0 0;">
-                            Podés seleccionar varios PDFs a la vez. Todos
-                            se cargan con los mismos datos de abajo y cada
-                            uno toma el nombre de su archivo.
-                        </p>
-
-                    </div>
-
-
-                    <div>
-
-                        <label>Nombre del documento</label>
-
-                        <input type="text"
-                               name="nombre_documento"
-                               placeholder="Ej. Procedimiento error de CAE">
-
-                    </div>
-
-
-                    <div>
-
-                        <label>Producto</label>
-
-                        <select name="producto">
-
-                            <option selected>Dragonfish</option>
-                            <option>zNube</option>
-                            <option>Lince</option>
-                            <option>Pantera</option>
-
-                        </select>
-
-                    </div>
-
-
-                    <div>
-
-                        <label>Categoría</label>
-
-                        <select name="categoria">
-
-                            <option selected>Seleccionar categoría</option>
-                            <option>Facturación Electrónica</option>
-                            <option>Mantenimiento</option>
-                            <option>Base de Datos</option>
-                            <option>Configuración</option>
-                            <option>Ecommerce</option>
-                            <option>Otros</option>
-
-                        </select>
-
-                    </div>
-
-
-                    <div>
-
-                        <label>Subcategoría</label>
-
-                        <input type="text"
-                               name="subcategoria"
-                               placeholder="Ej. CAE / Certificados / ARCA">
-
-                    </div>
-
-
-                    <div>
-
-                        <label>Nivel de soporte</label>
-
-                        <select name="nivel">
-
-                            <option selected>L1</option>
-                            <option>L2</option>
-                            <option>L3</option>
-                            <option>Todos</option>
-
-                        </select>
-
-                    </div>
-
-
-                    <div>
-
-                        <label>Estado</label>
-
-                        <select name="estado">
-
-                            <option selected>Vigente</option>
-                            <option>Pendiente de revisión</option>
-                            <option>Archivado</option>
-
-                        </select>
-
-                    </div>
-
-
-                    <div>
-
-                        <label>Fuente</label>
-
-                        <select name="fuente">
-
-                            <option selected>Procedimiento oficial</option>
-                            <option>Manual</option>
-                            <option>Documento interno</option>
-                            <option>Otro</option>
-
-                        </select>
-
-                    </div>
+                    <span class="muted" id="upResumen">Todavía no elegiste archivos.</span>
 
                 </div>
 
+                <input type="file"
+                       id="upInput"
+                       name="archivo"
+                       accept=".pdf,application/pdf"
+                       multiple
+                       style="display:none;"
+                       onchange="upAlElegir(this)">
 
-                <div style="margin-top:20px;">
-
-                    <label>
-                        Descripción / alcance del documento
-                    </label>
-
-                    <textarea
-                        name="descripcion"
-                        placeholder="Describí brevemente qué problema o procedimiento cubre este documento."></textarea>
-
+                <div style="margin-top:14px; display:none;" id="upAplicarTodos">
+                    <button type="button"
+                            class="secondary"
+                            onclick="upCopiarATodos()">
+                        Copiar la configuración del primero a todos
+                    </button>
                 </div>
 
+                <div id="upLista" style="margin-top:14px;"></div>
 
                 <div class="buttons">
 
                     <button type="button"
                             class="secondary"
-                            onclick="document.getElementById('uploadForm').style.display='none'">
+                            onclick="upCerrar()">
                         Cancelar
                     </button>
 
                     <button type="submit"
-                            class="primary">
-                        Incorporar documento
+                            class="primary"
+                            id="upBoton">
+                        Incorporar documentos
                     </button>
 
                 </div>
 
             </form>
 
+            <!-- Modelo de la configuración de cada archivo -->
+            <template id="upPlantilla">
+
+                <div class="up-fila"
+                     style="border:1px solid #e5e7eb; border-radius:9px; padding:14px; margin-bottom:12px; background:#f9fafb;">
+
+                    <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:10px;">
+
+                        <strong class="up-nombre" style="word-break:break-all;"></strong>
+
+                        <button type="button"
+                                class="danger up-quitar"
+                                style="padding:6px 12px;">
+                            Quitar
+                        </button>
+
+                    </div>
+
+                    <div class="grid">
+
+                        <div>
+                            <label>Producto</label>
+                            <select name="producto">
+                                {% for p in productos %}
+                                <option>{{ p }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div>
+                            <label>Categoría</label>
+                            <select name="categoria">
+                                <option selected>Seleccionar categoría</option>
+                                <option>Facturación Electrónica</option>
+                                <option>Mantenimiento</option>
+                                <option>Base de Datos</option>
+                                <option>Configuración</option>
+                                <option>Ecommerce</option>
+                                <option>Otros</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label>Subcategoría</label>
+                            <input type="text"
+                                   name="subcategoria"
+                                   placeholder="Ej. CAE / Certificados / ARCA">
+                        </div>
+
+                        <div>
+                            <label>Nivel de soporte</label>
+                            <select name="nivel">
+                                <option selected>L1</option>
+                                <option>L2</option>
+                                <option>L3</option>
+                                <option>Todos</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label>Estado</label>
+                            <select name="estado">
+                                <option selected>Vigente</option>
+                                <option>Pendiente de revisión</option>
+                                <option>Archivado</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label>Fuente</label>
+                            <select name="fuente">
+                                <option selected>Procedimiento oficial</option>
+                                <option>Manual</option>
+                                <option>Documento interno</option>
+                                <option>Otro</option>
+                            </select>
+                        </div>
+
+                    </div>
+
+                    <div style="margin-top:12px;">
+                        <label>Descripción / alcance del documento</label>
+                        <textarea name="descripcion"
+                                  style="min-height:70px;"
+                                  placeholder="Describí brevemente qué problema o procedimiento cubre este documento."></textarea>
+                    </div>
+
+                </div>
+
+            </template>
+
         </div>
+
+
+        <script>
+
+            // Archivos elegidos (File) y su bloque de configuración (DOM),
+            // siempre en el mismo orden.
+            window.upArchivos = [];
+            var upNodos = [];
+
+            function upAbrir() {
+
+                var caja = document.getElementById("uploadForm");
+
+                caja.style.display = "block";
+
+                // Baja hasta el formulario para no tener que buscarlo
+                caja.scrollIntoView({behavior: "smooth", block: "start"});
+            }
+
+            function upCerrar() {
+
+                window.upArchivos = [];
+                upNodos = [];
+
+                document.getElementById("upLista").innerHTML = "";
+                document.getElementById("upInput").value = "";
+
+                upActualizar();
+
+                document.getElementById("uploadForm").style.display = "none";
+            }
+
+            function upSincronizar() {
+
+                // Deja en el campo de archivos exactamente la lista actual
+                var dt = new DataTransfer();
+
+                window.upArchivos.forEach(function (f) { dt.items.add(f); });
+
+                document.getElementById("upInput").files = dt.files;
+            }
+
+            function upActualizar() {
+
+                var n = window.upArchivos.length;
+
+                document.getElementById("upResumen").textContent =
+                    n === 0
+                        ? "Todavía no elegiste archivos."
+                        : n + (n === 1 ? " archivo elegido." : " archivos elegidos.");
+
+                document.getElementById("upAplicarTodos").style.display =
+                    n > 1 ? "block" : "none";
+            }
+
+            function upAlElegir(input) {
+
+                var nuevos = Array.prototype.slice.call(input.files);
+                var rechazados = [];
+
+                nuevos.forEach(function (f) {
+
+                    if (!/\.pdf$/i.test(f.name)) {
+                        rechazados.push(f.name);
+                        return;
+                    }
+
+                    var repetido = window.upArchivos.some(function (x) {
+                        return x.name === f.name && x.size === f.size;
+                    });
+
+                    if (repetido) { return; }
+
+                    if (window.upArchivos.length >= {{ max_pdfs }}) {
+                        rechazados.push(f.name + " (máximo {{ max_pdfs }} por vez)");
+                        return;
+                    }
+
+                    window.upArchivos.push(f);
+                    upNodos.push(upCrearFila(f));
+                });
+
+                upSincronizar();
+                upActualizar();
+
+                if (rechazados.length) {
+                    alert("No se agregaron: " + rechazados.join(", "));
+                }
+            }
+
+            function upCrearFila(archivo) {
+
+                var plantilla = document.getElementById("upPlantilla");
+
+                var nodo = plantilla.content.firstElementChild.cloneNode(true);
+
+                // Nombre del documento = nombre del archivo
+                nodo.querySelector(".up-nombre").textContent =
+                    "📄 " + archivo.name.replace(/\.pdf$/i, "");
+
+                nodo.querySelector(".up-quitar").onclick = function () {
+
+                    var i = upNodos.indexOf(nodo);
+
+                    if (i < 0) { return; }
+
+                    window.upArchivos.splice(i, 1);
+                    upNodos.splice(i, 1);
+
+                    nodo.remove();
+
+                    upSincronizar();
+                    upActualizar();
+                };
+
+                document.getElementById("upLista").appendChild(nodo);
+
+                return nodo;
+            }
+
+            function upCopiarATodos() {
+
+                if (upNodos.length < 2) { return; }
+
+                var origen = upNodos[0];
+
+                upNodos.slice(1).forEach(function (nodo) {
+
+                    ["producto", "categoria", "subcategoria", "nivel",
+                     "estado", "fuente", "descripcion"].forEach(function (campo) {
+
+                        nodo.querySelector('[name="' + campo + '"]').value =
+                            origen.querySelector('[name="' + campo + '"]').value;
+                    });
+                });
+            }
+
+            function upEnviar(formulario) {
+
+                if (!window.upArchivos.length) {
+                    alert("Elegí al menos un PDF.");
+                    return false;
+                }
+
+                upSincronizar();
+
+                var boton = document.getElementById("upBoton");
+
+                boton.disabled = true;
+                boton.textContent = "Subiendo...";
+
+                return true;
+            }
+
+        </script>
 
 
         <!-- GUARDADO Y COPIA DE SEGURIDAD -->
@@ -1624,6 +1809,7 @@
             </p>
             {% endif %}
 
+            {% if usuario_actual and usuario_actual.rol == "admin" %}
             <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-top:10px;">
 
                 <a class="button secondary" href="/knowledge/backup">
@@ -1644,6 +1830,7 @@
                 </form>
 
             </div>
+            {% endif %}
 
         </div>
 
@@ -1942,6 +2129,204 @@
         <!-- ============================= -->
         <!-- CONEXIONES -->
         <!-- ============================= -->
+
+        {% elif section == "usuarios" %}
+
+        <div class="card">
+
+            <h2>Crear usuario</h2>
+
+            <p class="muted">
+                Los usuarios nuevos pueden usar la plataforma. Los
+                administradores además pueden crear y administrar usuarios y
+                restaurar copias de seguridad.
+            </p>
+
+            <form method="POST" action="/usuarios/crear" autocomplete="off">
+
+                <div class="grid">
+
+                    <div>
+                        <label>Usuario</label>
+                        <input type="text"
+                               name="usuario"
+                               placeholder="Ej. juan.perez"
+                               pattern="[A-Za-z0-9._\-]{3,30}"
+                               required>
+                    </div>
+
+                    <div>
+                        <label>Contraseña (mínimo 8 caracteres)</label>
+                        <input type="password"
+                               name="clave"
+                               minlength="8"
+                               autocomplete="new-password"
+                               required>
+                    </div>
+
+                    <div>
+                        <label>Rol</label>
+                        <select name="rol">
+                            <option value="usuario" selected>Usuario</option>
+                            <option value="admin">Administrador</option>
+                        </select>
+                    </div>
+
+                </div>
+
+                <div class="buttons">
+                    <button type="submit" class="primary">Crear usuario</button>
+                </div>
+
+            </form>
+
+        </div>
+
+
+        <div class="card">
+
+            <h2>Usuarios</h2>
+
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead>
+                        <tr>
+                            <th>Usuario</th>
+                            <th>Rol</th>
+                            <th>Estado</th>
+                            <th>Último acceso</th>
+                            <th>Nueva contraseña</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for u in lista_usuarios %}
+                        <tr>
+                            <td>
+                                <strong>{{ u.usuario }}</strong>
+                                {% if usuario_actual and u.id == usuario_actual.id %}
+                                <span class="tag gray">vos</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if u.rol == "admin" %}
+                                <span class="tag">Administrador</span>
+                                {% else %}
+                                <span class="tag gray">Usuario</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if u.activo %}
+                                <span class="tag green">Activo</span>
+                                {% else %}
+                                <span class="tag yellow">Desactivado</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ (u.ultimo_acceso or "—").replace("T", " ") }}{% if u.ultimo_acceso %} UTC{% endif %}</td>
+                            <td>
+                                <form method="POST"
+                                      action="/usuarios/{{ u.id }}/clave"
+                                      style="display:flex; gap:6px;"
+                                      autocomplete="off">
+                                    <input type="password"
+                                           name="clave"
+                                           minlength="8"
+                                           placeholder="Nueva contraseña"
+                                           autocomplete="new-password"
+                                           style="min-width:150px;"
+                                           required>
+                                    <button type="submit" class="secondary">Cambiar</button>
+                                </form>
+                            </td>
+                            <td>
+                                {% if usuario_actual and u.id != usuario_actual.id %}
+                                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+
+                                    <form method="POST" action="/usuarios/{{ u.id }}/rol">
+                                        <input type="hidden" name="rol"
+                                               value="{{ 'usuario' if u.rol == 'admin' else 'admin' }}">
+                                        <button type="submit" class="secondary">
+                                            {{ 'Quitar admin' if u.rol == 'admin' else 'Hacer admin' }}
+                                        </button>
+                                    </form>
+
+                                    <form method="POST" action="/usuarios/{{ u.id }}/estado">
+                                        <button type="submit" class="secondary">
+                                            {{ 'Desactivar' if u.activo else 'Activar' }}
+                                        </button>
+                                    </form>
+
+                                    <form method="POST"
+                                          action="/usuarios/{{ u.id }}/eliminar"
+                                          onsubmit="return confirm('¿Eliminar al usuario {{ u.usuario }}? No se puede deshacer.')">
+                                        <button type="submit" class="danger">Eliminar</button>
+                                    </form>
+
+                                </div>
+                                {% else %}
+                                <span class="muted">—</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+
+
+        {% elif section == "cuenta" %}
+
+        <div class="card">
+
+            <h2>Mi cuenta</h2>
+
+            {% if usuario_actual and usuario_actual.id %}
+
+            <p class="muted">
+                Usuario: <strong>{{ usuario_actual.usuario }}</strong> ·
+                Rol: <strong>{{ "Administrador" if usuario_actual.rol == "admin" else "Usuario" }}</strong>
+            </p>
+
+            <h3>Cambiar mi contraseña</h3>
+
+            <form method="POST" action="/cuenta/clave" style="max-width:380px;">
+
+                <label>Contraseña actual</label>
+                <input type="password"
+                       name="clave_actual"
+                       autocomplete="current-password"
+                       required>
+
+                <label style="margin-top:12px;">Contraseña nueva (mínimo 8 caracteres)</label>
+                <input type="password"
+                       name="clave_nueva"
+                       minlength="8"
+                       autocomplete="new-password"
+                       required>
+
+                <label style="margin-top:12px;">Repetir contraseña nueva</label>
+                <input type="password"
+                       name="clave_repetida"
+                       minlength="8"
+                       autocomplete="new-password"
+                       required>
+
+                <div class="buttons">
+                    <button type="submit" class="primary">Guardar contraseña</button>
+                </div>
+
+            </form>
+
+            {% else %}
+
+            <p class="muted">El login está desactivado en este servidor.</p>
+
+            {% endif %}
+
+        </div>
+
 
         {% elif section == "conexiones" %}
 
