@@ -1500,6 +1500,16 @@
 
                 </div>
 
+                <label style="display:flex; gap:8px; align-items:center; font-size:12px; margin-top:12px;">
+                    <input type="checkbox"
+                           name="tipificar_ia"
+                           value="1"
+                           checked
+                           style="width:auto;">
+                    Tipificar con IA lo que deje en "Automático" o vacío
+                    (los documentos que complete la IA quedan Pendientes de revisión)
+                </label>
+
                 <input type="file"
                        id="upInput"
                        name="archivo"
@@ -1568,7 +1578,7 @@
                         <div>
                             <label>Categoría</label>
                             <select name="categoria">
-                                <option selected>Seleccionar categoría</option>
+                                <option value="auto" selected>🤖 Automático (IA)</option>
                                 <option>Facturación Electrónica</option>
                                 <option>Mantenimiento</option>
                                 <option>Base de Datos</option>
@@ -1582,13 +1592,14 @@
                             <label>Subcategoría</label>
                             <input type="text"
                                    name="subcategoria"
-                                   placeholder="Ej. CAE / Certificados / ARCA">
+                                   placeholder="Vacío = la completa la IA">
                         </div>
 
                         <div>
                             <label>Nivel de soporte</label>
                             <select name="nivel">
-                                <option selected>L1</option>
+                                <option value="auto" selected>🤖 Automático (IA)</option>
+                                <option>L1</option>
                                 <option>L2</option>
                                 <option>L3</option>
                                 <option>Todos</option>
@@ -1607,7 +1618,8 @@
                         <div>
                             <label>Fuente</label>
                             <select name="fuente">
-                                <option selected>Procedimiento oficial</option>
+                                <option value="auto" selected>🤖 Automático (IA)</option>
+                                <option>Procedimiento oficial</option>
                                 <option>Manual</option>
                                 <option>Documento interno</option>
                                 <option>Otro</option>
@@ -1620,7 +1632,7 @@
                         <label>Descripción / alcance del documento</label>
                         <textarea name="descripcion"
                                   style="min-height:70px;"
-                                  placeholder="Describí brevemente qué problema o procedimiento cubre este documento."></textarea>
+                                  placeholder="Vacía = la completa la IA (qué problema o procedimiento cubre el documento)."></textarea>
                     </div>
 
                 </div>
@@ -1877,6 +1889,10 @@
                                 <td>
                                     📄 {{ documento.nombre or documento.archivo }}
 
+                                    {% if documento.origen %}
+                                        <br><small>☁ {{ documento.origen.conexion }}{% if documento.origen.ruta %} · {{ documento.origen.ruta }}{% endif %}</small>
+                                    {% endif %}
+
                                     {% if documento.procesamiento == "PROCESANDO" %}
                                         <br><span class="tag yellow">⏳ Procesando…</span>
                                     {% elif documento.procesamiento == "ERROR" %}
@@ -1904,6 +1920,16 @@
                                     {% if documento.subcategoria %}
                                         <br>
                                         <small>{{ documento.subcategoria }}</small>
+                                    {% endif %}
+
+                                    {% set tip = documento.tipificacion or {} %}
+
+                                    {% if tip.error %}
+                                        <br><span class="tag gray" title="{{ tip.error }}">⚠ No se pudo tipificar</span>
+                                    {% elif tip.origen == "IA" and not tip.revisada %}
+                                        <br><span class="tag yellow">🤖 Tipificado por IA — revisar{% if tip.confianza %} ({{ tip.confianza }}){% endif %}</span>
+                                    {% elif tip.origen == "IA" and tip.revisada %}
+                                        <br><span class="tag green">✔ Revisado</span>
                                     {% endif %}
 
                                 </td>
@@ -1978,6 +2004,47 @@
                                             Ver
                                         </button>
 
+                                        {% set tip2 = documento.tipificacion or {} %}
+
+                                        {% if documento.procesamiento == "PROCESADO" and tip2.origen == "IA" and not tip2.revisada and not tip2.error and documento.estado == "Pendiente de revisión" %}
+                                        <form action="/knowledge/documento/{{ documento.id }}/confirmar"
+                                              method="POST"
+                                              style="margin:0;">
+                                            <button class="primary" type="submit"
+                                                    title="Confirma la tipificación y deja el documento Vigente">
+                                                ✔ Confirmar
+                                            </button>
+                                        </form>
+                                        {% endif %}
+
+                                        <button
+                                            class="secondary"
+                                            type="button"
+                                            onclick='editarDocumento(
+                                                {{ documento.id|tojson }},
+                                                {{ (documento.nombre or documento.archivo)|tojson }},
+                                                {{ documento.producto|tojson }},
+                                                {{ documento.categoria|tojson }},
+                                                {{ documento.subcategoria|tojson }},
+                                                {{ documento.nivel|tojson }},
+                                                {{ documento.estado|tojson }},
+                                                {{ documento.fuente|tojson }},
+                                                {{ documento.descripcion|tojson }}
+                                            )'>
+                                            ✏ Editar
+                                        </button>
+
+                                        {% if documento.procesamiento == "PROCESADO" %}
+                                        <form action="/knowledge/documento/{{ documento.id }}/tipificar"
+                                              method="POST"
+                                              style="margin:0;"
+                                              onsubmit="return confirm('La IA va a volver a decidir categoría, subcategoría, nivel, fuente y descripción, y el documento queda Pendiente de revisión. ¿Seguir?')">
+                                            <button class="secondary" type="submit">
+                                                🤖 Tipificar con IA
+                                            </button>
+                                        </form>
+                                        {% endif %}
+
                                     </div>
 
                                 </td>
@@ -2039,6 +2106,115 @@
                     <div id="contenidoTexto"
                          class="pdf-text">
                     </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- MODAL EDITAR DOCUMENTO -->
+
+        <div id="editModal"
+             class="modal"
+             onclick="cerrarEditar()">
+
+            <div class="modal-content"
+                 onclick="event.stopPropagation()">
+
+                <div class="modal-header">
+
+                    <h2 id="editTitulo">Editar documento</h2>
+
+                    <button class="modal-close"
+                            type="button"
+                            onclick="cerrarEditar()">
+                        ×
+                    </button>
+
+                </div>
+
+                <div class="modal-body">
+
+                    <form id="editForm" method="POST">
+
+                        <div class="grid">
+
+                            <div>
+                                <label>Producto</label>
+                                <select name="producto" id="editProducto">
+                                    <option value="">(sin producto: sirve para todos)</option>
+                                    {% for p in productos %}
+                                    <option>{{ p }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label>Categoría</label>
+                                <select name="categoria" id="editCategoria">
+                                    <option value="">(sin categoría)</option>
+                                    <option>Facturación Electrónica</option>
+                                    <option>Mantenimiento</option>
+                                    <option>Base de Datos</option>
+                                    <option>Configuración</option>
+                                    <option>Ecommerce</option>
+                                    <option>Otros</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label>Subcategoría</label>
+                                <input type="text" name="subcategoria" id="editSubcategoria">
+                            </div>
+
+                            <div>
+                                <label>Nivel de soporte</label>
+                                <select name="nivel" id="editNivel">
+                                    <option value="">(sin nivel)</option>
+                                    <option>L1</option>
+                                    <option>L2</option>
+                                    <option>L3</option>
+                                    <option>Todos</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label>Estado</label>
+                                <select name="estado" id="editEstado">
+                                    <option>Vigente</option>
+                                    <option>Pendiente de revisión</option>
+                                    <option>Archivado</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label>Fuente</label>
+                                <select name="fuente" id="editFuente">
+                                    <option value="">(sin fuente)</option>
+                                    <option>Procedimiento oficial</option>
+                                    <option>Manual</option>
+                                    <option>Documento interno</option>
+                                    <option>Otro</option>
+                                </select>
+                            </div>
+
+                        </div>
+
+                        <div style="margin-top:14px;">
+                            <label>Descripción / alcance</label>
+                            <textarea name="descripcion"
+                                      id="editDescripcion"
+                                      style="min-height:80px;"></textarea>
+                        </div>
+
+                        <div class="buttons">
+                            <button type="button" class="secondary" onclick="cerrarEditar()">Cancelar</button>
+                            <button type="submit" class="primary">Guardar</button>
+                        </div>
+
+                    </form>
 
                 </div>
 
@@ -2336,9 +2512,394 @@
 
             <p class="muted">
                 Integraciones con WhatsApp, APIs, tickets y otros sistemas.
+                Desde acá conectás carpetas de <strong>Google Drive</strong>,
+                <strong>SharePoint</strong> y <strong>OneDrive</strong> para
+                que la plataforma tome los PDFs sola, sin subirlos a mano.
             </p>
 
         </div>
+
+
+        <div class="card">
+
+            <h3>Fuentes de documentos</h3>
+
+            <p class="muted">
+                Cada conexión usa su propia cuenta. Los archivos nuevos o
+                modificados se incorporan como <strong>Pendientes de revisión</strong>
+                (el agente en WhatsApp no los usa hasta que los confirmes)
+                y los que se quitan de la carpeta se archivan.
+                {% if sync_intervalo and sync_intervalo > 0 %}
+                Las conexiones con sincronización automática se revisan cada
+                {{ sync_intervalo }} minutos.
+                {% else %}
+                La sincronización automática está apagada: se sincroniza solo a mano.
+                {% endif %}
+            </p>
+
+            {% if not cifrado_ok %}
+            <p>
+                <span class="tag yellow">⚠ Falta FLASK_SECRET_KEY</span>
+                <span class="muted">
+                    Para guardar credenciales hay que definir en Render una
+                    FLASK_SECRET_KEY fija.
+                </span>
+            </p>
+            {% endif %}
+
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead>
+                        <tr>
+                            <th>Conexión</th>
+                            <th>Carpeta</th>
+                            <th>Producto</th>
+                            <th>Opciones</th>
+                            <th>Última sincronización</th>
+                            {% if usuario_actual and usuario_actual.rol == "admin" %}
+                            <th>Acciones</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for c in lista_conexiones %}
+                        <tr>
+                            <td>
+                                <strong>{{ c.nombre }}</strong><br>
+                                <span class="tag gray">{{ tipos_conexion.get(c.tipo, c.tipo) }}</span>
+                                {% if not c.activa %}
+                                <span class="tag yellow">Desactivada</span>
+                                {% endif %}
+                            </td>
+                            <td style="max-width:220px; word-break:break-all;">
+                                <small>{{ c.url }}</small>
+                            </td>
+                            <td>{{ "Por subcarpeta / IA" if c.producto == "auto" else c.producto }}</td>
+                            <td>
+                                <small>
+                                    {{ "Automática" if c.auto else "Manual" }}<br>
+                                    {{ "Tipifica con IA" if c.tipificar_ia else "Sin IA" }}
+                                </small>
+                            </td>
+                            <td>
+                                {% if c.sincronizando %}
+                                <span class="tag yellow">⏳ Sincronizando…</span>
+                                {% elif c.ultimo_sync %}
+                                <small>{{ c.ultimo_sync.replace("T", " ") }} UTC</small>
+                                {% if c.ultimo_resultado %}<br><small>{{ c.ultimo_resultado }}</small>{% endif %}
+                                {% if c.ultimo_error %}<br><span class="tag yellow">⚠</span> <small>{{ c.ultimo_error }}</small>{% endif %}
+                                {% else %}
+                                <span class="muted">Todavía no se sincronizó.</span>
+                                {% endif %}
+                            </td>
+                            {% if usuario_actual and usuario_actual.rol == "admin" %}
+                            <td>
+                                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+
+                                    <form method="POST" action="/conexiones/{{ c.id }}/probar">
+                                        <button type="submit" class="secondary">Probar</button>
+                                    </form>
+
+                                    <form method="POST" action="/conexiones/{{ c.id }}/sincronizar">
+                                        <button type="submit" class="primary"
+                                                {% if c.sincronizando or not c.activa %}disabled{% endif %}>
+                                            Sincronizar ahora
+                                        </button>
+                                    </form>
+
+                                    <button type="button" class="secondary"
+                                            onclick="document.getElementById('conEditar{{ c.id }}').style.display = (document.getElementById('conEditar{{ c.id }}').style.display === 'none' ? 'table-row' : 'none')">
+                                        Editar
+                                    </button>
+
+                                    <form method="POST" action="/conexiones/{{ c.id }}/estado">
+                                        <button type="submit" class="secondary">
+                                            {{ "Desactivar" if c.activa else "Activar" }}
+                                        </button>
+                                    </form>
+
+                                    <form method="POST"
+                                          action="/conexiones/{{ c.id }}/eliminar"
+                                          onsubmit="return confirm('¿Eliminar la conexión {{ c.nombre }}? Los documentos ya incorporados quedan en la Knowledge Base.')">
+                                        <button type="submit" class="danger">Eliminar</button>
+                                    </form>
+
+                                </div>
+                            </td>
+                            {% endif %}
+                        </tr>
+
+                        {% if usuario_actual and usuario_actual.rol == "admin" %}
+                        <tr id="conEditar{{ c.id }}" style="display:none;">
+                            <td colspan="6" style="background:#f9fafb;">
+
+                                <form method="POST"
+                                      action="/conexiones/{{ c.id }}/editar"
+                                      enctype="multipart/form-data"
+                                      autocomplete="off">
+
+                                    <div class="grid">
+
+                                        <div>
+                                            <label>Nombre</label>
+                                            <input type="text" name="nombre" value="{{ c.nombre }}" required>
+                                        </div>
+
+                                        <div>
+                                            <label>URL de la carpeta</label>
+                                            <input type="text" name="url" value="{{ c.url }}" required>
+                                        </div>
+
+                                        <div>
+                                            <label>Producto</label>
+                                            <select name="producto">
+                                                <option value="auto" {% if c.producto == "auto" %}selected{% endif %}>Por subcarpeta / IA</option>
+                                                {% for p in productos %}
+                                                <option {% if c.producto == p %}selected{% endif %}>{{ p }}</option>
+                                                {% endfor %}
+                                            </select>
+                                        </div>
+
+                                    </div>
+
+                                    <div style="margin-top:10px; display:flex; gap:18px; flex-wrap:wrap;">
+                                        <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
+                                            <input type="checkbox" name="auto" value="1" style="width:auto;" {% if c.auto %}checked{% endif %}>
+                                            Sincronizar automáticamente
+                                        </label>
+                                        <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
+                                            <input type="checkbox" name="tipificar_ia" value="1" style="width:auto;" {% if c.tipificar_ia %}checked{% endif %}>
+                                            Tipificar con IA
+                                        </label>
+                                    </div>
+
+                                    <p class="muted" style="margin:12px 0 6px;">
+                                        Credenciales: dejá los campos vacíos para conservar las actuales
+                                        {% if not c.tiene_credenciales %}(esta conexión no tiene credenciales guardadas){% endif %}.
+                                    </p>
+
+                                    {% if c.tipo == "google_drive" %}
+                                    <div class="grid">
+                                        <div>
+                                            <label>Modo</label>
+                                            <select name="g_modo">
+                                                <option value="cuenta_servicio">Cuenta de servicio (JSON)</option>
+                                                <option value="api_key">API key (carpeta pública)</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label>Archivo JSON de la cuenta de servicio</label>
+                                            <input type="file" name="g_json_archivo" accept=".json,application/json">
+                                        </div>
+                                        <div>
+                                            <label>API key</label>
+                                            <input type="password" name="g_api_key" autocomplete="new-password">
+                                        </div>
+                                    </div>
+                                    {% else %}
+                                    <div class="grid">
+                                        <div>
+                                            <label>Tenant ID</label>
+                                            <input type="text" name="ms_tenant">
+                                        </div>
+                                        <div>
+                                            <label>Client ID</label>
+                                            <input type="text" name="ms_client_id">
+                                        </div>
+                                        <div>
+                                            <label>Client Secret</label>
+                                            <input type="password" name="ms_client_secret" autocomplete="new-password">
+                                        </div>
+                                    </div>
+                                    {% endif %}
+
+                                    <div class="buttons">
+                                        <button type="submit" class="primary">Guardar cambios</button>
+                                    </div>
+
+                                </form>
+
+                            </td>
+                        </tr>
+                        {% endif %}
+
+                        {% else %}
+                        <tr>
+                            <td colspan="6" class="muted" style="text-align:center; padding:26px;">
+                                Todavía no hay conexiones.
+                                {% if usuario_actual and usuario_actual.rol == "admin" %}Agregá la primera acá abajo.{% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+
+
+        {% if usuario_actual and usuario_actual.rol == "admin" %}
+
+        <div class="card">
+
+            <h3>Agregar conexión</h3>
+
+            <form method="POST"
+                  action="/conexiones/crear"
+                  enctype="multipart/form-data"
+                  autocomplete="off">
+
+                <div class="grid">
+
+                    <div>
+                        <label>Tipo</label>
+                        <select name="tipo" id="conTipo" onchange="conCambiarTipo()">
+                            {% for clave, etiqueta in tipos_conexion.items() %}
+                            <option value="{{ clave }}">{{ etiqueta }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Nombre de la conexión</label>
+                        <input type="text" name="nombre" placeholder="Ej. Manuales Dragonfish (Drive)" required>
+                    </div>
+
+                    <div>
+                        <label>URL de la carpeta</label>
+                        <input type="text" name="url" placeholder="https://drive.google.com/drive/folders/..." required>
+                    </div>
+
+                    <div>
+                        <label>Producto</label>
+                        <select name="producto">
+                            <option value="auto" selected>Por subcarpeta / IA</option>
+                            {% for p in productos %}
+                            <option>{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                </div>
+
+                <p class="muted" style="margin:6px 0 0;">
+                    <strong>Por subcarpeta / IA</strong>: si dentro de la carpeta hay una
+                    subcarpeta por producto (Dragonfish, zNube, Lince, Pantera), cada
+                    documento toma el producto de su subcarpeta. Si no, lo deduce la IA
+                    (y si no puede, queda sin producto para que lo definas al revisar).
+                </p>
+
+                <div style="margin-top:12px; display:flex; gap:18px; flex-wrap:wrap;">
+                    <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
+                        <input type="checkbox" name="auto" value="1" style="width:auto;" checked>
+                        Sincronizar automáticamente
+                    </label>
+                    <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
+                        <input type="checkbox" name="tipificar_ia" value="1" style="width:auto;" checked>
+                        Tipificar con IA (categoría, subcategoría, nivel, fuente y descripción)
+                    </label>
+                </div>
+
+
+                <!-- Credenciales según el tipo -->
+
+                <div id="conGoogle" style="margin-top:16px;">
+
+                    <h4 style="margin:0 0 8px;">Credenciales de Google Drive</h4>
+
+                    <div class="grid">
+                        <div>
+                            <label>Modo</label>
+                            <select name="g_modo" id="conGModo" onchange="conCambiarTipo()">
+                                <option value="cuenta_servicio">Cuenta de servicio (JSON) — carpetas privadas</option>
+                                <option value="api_key">API key — carpeta pública</option>
+                            </select>
+                        </div>
+                        <div id="conGJson">
+                            <label>Archivo JSON de la cuenta de servicio</label>
+                            <input type="file" name="g_json_archivo" accept=".json,application/json">
+                        </div>
+                        <div id="conGKey" style="display:none;">
+                            <label>API key</label>
+                            <input type="password" name="g_api_key" autocomplete="new-password">
+                        </div>
+                    </div>
+
+                    <p class="muted" style="margin:8px 0 0;">
+                        1) En Google Cloud creá una <em>cuenta de servicio</em> y habilitá la
+                        <em>Google Drive API</em>. 2) Descargá su clave en formato JSON y subila acá.
+                        3) En Drive, compartí la carpeta (como <em>Lector</em>) con el mail de esa
+                        cuenta de servicio (termina en <code>iam.gserviceaccount.com</code>).
+                    </p>
+
+                </div>
+
+                <div id="conMicrosoft" style="margin-top:16px; display:none;">
+
+                    <h4 style="margin:0 0 8px;">Credenciales de Microsoft (SharePoint / OneDrive)</h4>
+
+                    <div class="grid">
+                        <div>
+                            <label>Tenant ID</label>
+                            <input type="text" name="ms_tenant">
+                        </div>
+                        <div>
+                            <label>Client ID (aplicación)</label>
+                            <input type="text" name="ms_client_id">
+                        </div>
+                        <div>
+                            <label>Client Secret</label>
+                            <input type="password" name="ms_client_secret" autocomplete="new-password">
+                        </div>
+                    </div>
+
+                    <p class="muted" style="margin:8px 0 0;">
+                        Hace falta registrar una aplicación en Microsoft Entra ID con permisos de
+                        <em>aplicación</em> de solo lectura (<code>Files.Read.All</code> o
+                        <code>Sites.Read.All</code>) y el consentimiento de un administrador.
+                        Solo funciona con SharePoint / OneDrive de la empresa, no con OneDrive personal.
+                        Normalmente lo hace TI.
+                    </p>
+
+                </div>
+
+                <div class="buttons">
+                    <button type="submit" class="primary" {% if not cifrado_ok %}disabled{% endif %}>
+                        Agregar conexión
+                    </button>
+                </div>
+
+            </form>
+
+        </div>
+
+
+        <script>
+
+            function conCambiarTipo() {
+
+                var tipo = document.getElementById("conTipo").value;
+
+                document.getElementById("conGoogle").style.display =
+                    tipo === "google_drive" ? "block" : "none";
+
+                document.getElementById("conMicrosoft").style.display =
+                    tipo === "google_drive" ? "none" : "block";
+
+                var modo = document.getElementById("conGModo").value;
+
+                document.getElementById("conGJson").style.display =
+                    modo === "api_key" ? "none" : "block";
+
+                document.getElementById("conGKey").style.display =
+                    modo === "api_key" ? "block" : "none";
+            }
+
+            conCambiarTipo();
+
+        </script>
+
+        {% endif %}
 
 
         <!-- ============================= -->
@@ -3201,6 +3762,55 @@
     /* ============================================================
        VER INFORMACIÓN DEL DOCUMENTO
        ============================================================ */
+
+    function editarDocumento(
+        id, nombre, producto, categoria, subcategoria,
+        nivel, estado, fuente, descripcion
+    ) {
+
+        document.getElementById("editTitulo").textContent =
+            "Editar: " + nombre;
+
+        document.getElementById("editForm").action =
+            "/knowledge/documento/" + id + "/editar";
+
+        function poner(idCampo, valor) {
+
+            var campo = document.getElementById(idCampo);
+
+            valor = valor || "";
+
+            // Si el valor guardado no está en la lista, se agrega para no perderlo
+            if (campo.tagName === "SELECT") {
+
+                var existe = Array.prototype.some.call(
+                    campo.options, function (o) { return o.value === valor || o.text === valor; }
+                );
+
+                if (!existe && valor) {
+                    var o = document.createElement("option");
+                    o.textContent = valor;
+                    campo.appendChild(o);
+                }
+            }
+
+            campo.value = valor;
+        }
+
+        poner("editProducto", producto);
+        poner("editCategoria", categoria);
+        poner("editSubcategoria", subcategoria);
+        poner("editNivel", nivel);
+        poner("editEstado", estado);
+        poner("editFuente", fuente);
+        poner("editDescripcion", descripcion);
+
+        document.getElementById("editModal").style.display = "block";
+    }
+
+    function cerrarEditar() {
+        document.getElementById("editModal").style.display = "none";
+    }
 
     function verInfoDocumento(
         nombre,
