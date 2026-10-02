@@ -23,7 +23,7 @@
 
             if (carga && window.getComputedStyle(carga).display !== "none") { return true; }
 
-            var filas = document.querySelectorAll('[id^="conEditar"]');
+            var filas = document.querySelectorAll('[id^="conEditar"], [id^="agEditar"]');
 
             for (var k = 0; k < filas.length; k++) {
                 if (window.getComputedStyle(filas[k]).display !== "none") { return true; }
@@ -854,37 +854,181 @@
         </p>
 
 
-        <div class="card">
+        <div class="card" id="agentesLista">
 
-            <h2>Próximamente</h2>
+            <h2>Agentes por producto y tipificación</h2>
 
-            <div class="grid">
+            <p class="muted">
+                El cliente llega por WhatsApp con su producto ya identificado y lo
+                recibe el <strong>agente de recepción</strong> de ese producto.
+                Cuando clasifica la consulta, el caso pasa al
+                <strong>especialista</strong> de esa categoría (si existe y está
+                activo); si no hay especialista, lo resuelve el agente de recepción.
+                Cada agente tiene sus propias instrucciones y sus propias métricas.
+            </p>
 
-                <div>
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead>
+                        <tr>
+                            <th>Agente</th>
+                            <th>Atiende</th>
+                            <th>Estado</th>
+                            <th>Conversaciones</th>
+                            <th>Resueltas</th>
+                            <th>Derivadas</th>
+                            <th>Pasadas a especialista</th>
+                            {% if usuario_actual and usuario_actual.rol == "admin" %}
+                            <th>Acciones</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in productos %}
+                        <tr>
+                            <td colspan="8" style="background:#f3f4f6; font-weight:bold;">{{ p }}</td>
+                        </tr>
 
-                    <h3>Agente Ecommerce</h3>
+                        {% for a in agentes if a.producto == p %}
+                        <tr>
+                            <td>
+                                <strong>{{ a.nombre }}</strong>
+                                {% if a.instrucciones %}<br><small class="muted">con instrucciones propias</small>{% endif %}
+                            </td>
+                            <td>
+                                {% if a.categoria %}
+                                <span class="tag" style="white-space:nowrap;">{{ a.categoria }}</span><br>
+                                <small class="muted">Especialista</small>
+                                {% else %}
+                                <span class="tag gray" style="white-space:nowrap;">Recepción</span><br>
+                                <small class="muted">Todas las consultas</small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if a.activo %}
+                                <span class="tag green">Activo</span>
+                                {% else %}
+                                <span class="tag yellow">Pausado</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ a.total }}{% if a.en_curso %}<br><small>{{ a.en_curso }} en curso</small>{% endif %}</td>
+                            <td>{{ a.pct_resueltas }}<br><small>({{ a.resueltas }})</small></td>
+                            <td>{{ a.pct_derivadas }}<br><small>({{ a.derivadas }})</small></td>
+                            <td>{% if a.categoria %}<span class="muted">—</span>{% else %}{{ a.pasadas }}{% endif %}</td>
+                            {% if usuario_actual and usuario_actual.rol == "admin" %}
+                            <td>
+                                <div style="display:flex; gap:6px; flex-wrap:wrap;">
 
-                    <p class="muted">
-                        Soporte técnico para integraciones Ecommerce,
-                        Tienda Nube y plataformas relacionadas.
-                    </p>
+                                    <button type="button" class="secondary" style="padding:6px 10px; font-size:12px;"
+                                            onclick="var f = document.getElementById('agEditar{{ a.id }}'); f.style.display = (f.style.display === 'none' ? 'table-row' : 'none')">
+                                        Configurar
+                                    </button>
 
-                </div>
+                                    <form method="POST" action="/agentes/{{ a.id }}/estado" style="margin:0;">
+                                        <button type="submit" class="secondary" style="padding:6px 10px; font-size:12px;">
+                                            {{ "Pausar" if a.activo else "Activar" }}
+                                        </button>
+                                    </form>
 
-                <div>
+                                    {% if a.categoria %}
+                                    <form method="POST"
+                                          action="/agentes/{{ a.id }}/eliminar"
+                                          style="margin:0;"
+                                          onsubmit="return confirm('¿Eliminar a {{ a.nombre }}? Sus conversaciones anteriores se conservan.')">
+                                        <button type="submit" class="danger" style="padding:6px 10px; font-size:12px;">Eliminar</button>
+                                    </form>
+                                    {% endif %}
 
-                    <h3>Agente Facturación Electrónica</h3>
+                                </div>
+                            </td>
+                            {% endif %}
+                        </tr>
 
-                    <p class="muted">
-                        Diagnóstico y asistencia sobre facturación
-                        electrónica y servicios asociados.
-                    </p>
-
-                </div>
-
+                        {% if usuario_actual and usuario_actual.rol == "admin" %}
+                        <tr id="agEditar{{ a.id }}" style="display:none;">
+                            <td colspan="8" style="background:#f9fafb;">
+                                <form method="POST" action="/agentes/{{ a.id }}/editar">
+                                    <div class="grid">
+                                        <div>
+                                            <label>Nombre del agente</label>
+                                            <input type="text" name="nombre" value="{{ a.nombre }}">
+                                        </div>
+                                    </div>
+                                    <div style="margin-top:10px;">
+                                        <label>Instrucciones propias de este agente</label>
+                                        <textarea name="instrucciones"
+                                                  style="min-height:90px;"
+                                                  placeholder="Ej. Preguntá siempre qué versión de Tienda Nube usa el cliente. No indiques cambios en la base de datos.">{{ a.instrucciones }}</textarea>
+                                        <p class="muted" style="margin:6px 0 0;">
+                                            Se suman a las reglas generales. No pueden desactivar las reglas
+                                            estrictas (no inventar procedimientos, no tocar bases de datos, etc.).
+                                        </p>
+                                    </div>
+                                    <div class="buttons">
+                                        <button type="submit" class="primary">Guardar agente</button>
+                                    </div>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
 
         </div>
+
+
+        {% if usuario_actual and usuario_actual.rol == "admin" %}
+
+        <div class="card">
+
+            <h3>Agregar un especialista</h3>
+
+            <form method="POST" action="/agentes/crear">
+
+                <div class="grid">
+
+                    <div>
+                        <label>Producto</label>
+                        <select name="producto">
+                            {% for p in productos %}
+                            <option>{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Categoría (tipificación)</label>
+                        <select name="categoria">
+                            {% for c in categorias_agente %}
+                            <option>{{ c }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Nombre (opcional)</label>
+                        <input type="text" name="nombre" placeholder="Ej. Agente Base de Datos · Lince">
+                    </div>
+
+                </div>
+
+                <div style="margin-top:12px;">
+                    <label>Instrucciones propias (opcional)</label>
+                    <textarea name="instrucciones" style="min-height:80px;"></textarea>
+                </div>
+
+                <div class="buttons">
+                    <button type="submit" class="primary">Agregar especialista</button>
+                </div>
+
+            </form>
+
+        </div>
+
+        {% endif %}
 
 
         <!-- ============================= -->
@@ -3166,6 +3310,46 @@
 
         <div class="card">
 
+            <h3>Consultas por agente</h3>
+
+            <p class="muted">
+                Cuenta cada conversación en el agente con el que terminó (o con el
+                que sigue). Si empezó con la recepción y pasó a un especialista,
+                cuenta en el especialista.
+            </p>
+
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead>
+                        <tr>
+                            <th>Agente</th>
+                            <th>Producto</th>
+                            <th>Consultas</th>
+                            <th>Resueltas por IA</th>
+                            <th>Derivadas</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for f in m.por_agente %}
+                        <tr>
+                            <td>{{ f.agente }}</td>
+                            <td>{{ f.producto }}</td>
+                            <td>{{ f.total }}</td>
+                            <td>{{ f.resueltas }}</td>
+                            <td>{{ f.derivadas }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="5" class="muted">Todavía no hay conversaciones.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
             <h3>Consultas por categoría</h3>
 
             <div style="overflow-x:auto;">
@@ -3371,6 +3555,7 @@
                             <th>Fecha</th>
                             <th>Canal</th>
                             <th>Producto</th>
+                            <th>Agente</th>
                             <th>Categoría</th>
                             <th>Consulta</th>
                             <th>Estado</th>
@@ -3384,6 +3569,7 @@
                             <td>{{ c.fecha }}</td>
                             <td>{{ c.canal }}</td>
                             <td>{{ c.producto }}</td>
+                            <td>{{ c.agente }}</td>
                             <td>{{ c.categoria }}{% if c.subcategoria %}<br><small>{{ c.subcategoria }}</small>{% endif %}</td>
                             <td>{{ c.problema or '-' }}</td>
                             <td>
@@ -3408,7 +3594,7 @@
                             </td>
                         </tr>
                         {% else %}
-                        <tr><td colspan="8" class="muted">Todavía no hay conversaciones guardadas.</td></tr>
+                        <tr><td colspan="9" class="muted">Todavía no hay conversaciones guardadas.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -3586,6 +3772,7 @@
 
             var pgHistorial = [];
             var pgEstado = null;
+            var pgAgente = null;
             var pgConversacionId = "";
             var pgEnviando = false;
 
@@ -3670,6 +3857,14 @@
                 var d = estado.derivacion || {};
 
                 cont.appendChild(pgFila("Producto", estado.producto));
+
+                if (pgAgente && pgAgente.nombre) {
+                    cont.appendChild(pgFila(
+                        "Agente que responde",
+                        pgAgente.nombre + (pgAgente.categoria ? "" : " (recepción)")
+                    ));
+                }
+
                 cont.appendChild(pgFila("Categoría", estado.categoria));
                 cont.appendChild(pgFila("Subcategoría", estado.subcategoria));
                 cont.appendChild(pgFila("Etapa", estado.etapa));
@@ -3751,6 +3946,7 @@
 
                 pgHistorial = [];
                 pgEstado = null;
+                pgAgente = null;
                 pgConversacionId = "";
 
                 document.getElementById("pgChat").innerHTML = "";
@@ -3844,6 +4040,7 @@
                         pgHistorial.push({rol: "agente", texto: datos.respuesta});
 
                         pgEstado = datos.estado;
+                        pgAgente = datos.agente || null;
                         pgConversacionId = datos.conversacion_id || pgConversacionId;
 
                         pgPintarEstado(datos.estado, datos.fragmentos, datos.avisos);
