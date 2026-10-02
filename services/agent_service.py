@@ -566,17 +566,42 @@ def responder(
         ]
     )
 
+    # Un especialista busca primero en la documentación de SU tipificación
+    # (y la que no tiene categoría). Si no alcanza, amplía a todo el producto
+    # (donde igual pesan menos los documentos de otras categorías). La
+    # recepción busca en todo el producto.
+    categoria_agente = str((agente or {}).get("categoria") or "")
+
+    es_especialista = bool(categoria_agente)
+
+    categoria_busqueda = (
+        categoria_agente
+        or str(estado_previo.get("categoria") or "")
+        or None
+    )
+
     fragmentos = buscar_fragmentos(
         documentos,
         consulta,
         producto=producto,
         incluir_pendientes=incluir_pendientes,
-        categoria=(
-            str(estado_previo.get("categoria") or "")
-            or str((agente or {}).get("categoria") or "")
-            or None
-        )
+        categoria=categoria_busqueda,
+        categoria_estricta=es_especialista
     )
+
+    alcance_kb = f"{categoria_agente} ({producto})" if es_especialista else producto
+
+    if es_especialista and len(fragmentos) < 2:
+
+        fragmentos = buscar_fragmentos(
+            documentos,
+            consulta,
+            producto=producto,
+            incluir_pendientes=incluir_pendientes,
+            categoria=categoria_busqueda
+        )
+
+        alcance_kb = f"{producto} completo (ampliado: {categoria_agente} tenía poca documentación)"
 
     categorias = categorias_disponibles(
         documentos,
@@ -695,4 +720,5 @@ def responder(
             for f in fragmentos
         ],
         "avisos": avisos,
+        "alcance_kb": alcance_kb,
     }
