@@ -455,6 +455,9 @@ def render_seccion(section, **extra):
         simulado=MODO_SIMULADO,
         kb_persistente=kb_en_disco_persistente(),
         productos=agent_service.PRODUCTOS,
+        tipificaciones=agentes_service.tipificaciones_por_producto(
+            agent_service.PRODUCTOS
+        ),
         max_pdfs=MAX_PDFS_POR_ENVIO,
         **extra
     )
@@ -972,7 +975,7 @@ def _ya_revisado(doc):
 
 def tipificar_documento(
     doc_id, campos=None, sobrescribir=False, forzar_pendiente=False,
-    respetar_revision=False
+    respetar_revision=False, limpiar_invalida=False
 ):
     """
     Completa con IA los datos del documento. Por defecto solo rellena lo que
@@ -1009,7 +1012,13 @@ def tipificar_documento(
             ruta_origen=doc.get("ruta_origen") or "",
             texto=armar_contenido_completo(doc),
             productos=agent_service.PRODUCTOS,
-            simulado=MODO_SIMULADO
+            simulado=MODO_SIMULADO,
+            categorias_por_producto=agentes_service.tipificaciones_por_producto(
+                agent_service.PRODUCTOS
+            ),
+            producto_doc=agent_service.normalizar_producto(
+                doc.get("producto"), ""
+            )
         )
 
     except ErrorTipificacion as e:
@@ -1055,6 +1064,23 @@ def tipificar_documento(
 
         if permitido:
             cambios[campo] = nuevo
+
+    # Si la categoría que tenía ya no es una tipificación de su producto y la
+    # IA no encontró ninguna que corresponda, se vacía (mejor sin categoría
+    # que apuntando a una que no existe).
+    if (
+        limpiar_invalida and "categoria" in campos
+        and not resultado.get("categoria")
+    ):
+
+        producto_doc = agent_service.normalizar_producto(doc.get("producto"), "")
+
+        if (
+            doc.get("categoria")
+            and producto_doc
+            and doc.get("categoria") not in agentes_service.tipificaciones(producto_doc)
+        ):
+            cambios["categoria"] = ""
 
     if forzar_pendiente and cambios:
         cambios["estado"] = "Pendiente de revisión"
@@ -1679,7 +1705,7 @@ def _datos_resumen():
         "pausado": agente_pausado(),
         "docs_vigentes": vigentes,
         "agentes": agentes_con_metricas(),
-        "categorias_agente": tipificador_service.CATEGORIAS,
+        "lista_tipificaciones": agentes_service.listar_tipificaciones(),
     }
 
 
@@ -1693,22 +1719,164 @@ def agentes():
     return render_seccion("agentes", **_datos_resumen())
 
 
-@app.route("/agentes/crear", methods=["POST"])
+@app.route("/tipificaciones/crear", methods=["POST"])
 @solo_admin
-def agentes_crear():
+def tipificaciones_crear():
 
-    error = agentes_service.crear(
-        request.form.get("nombre", ""),
+    error = agentes_service.crear_tipificacion(
         request.form.get("producto", ""),
-        request.form.get("categoria", ""),
-        request.form.get("instrucciones", ""),
-        agent_service.PRODUCTOS,
-        tipificador_service.CATEGORIAS
+        request.form.get("nombre", ""),
+        agent_service.PRODUCTOS
     )
 
-    flash(error or "Agente creado. Ya recibe los casos de esa categoría.")
+    flash(
+        error or "Tipificación agregada. Se creó su agente especialista, "
+        "que ya recibe los casos de esa categoría."
+    )
 
-    return redirect(url_for("agentes") + "#agentesLista")
+    return redirect(url_for("agentes") + "#tipificaciones")
+
+
+@app.route("/tipificaciones/<int:tipificacion_id>/renombrar", methods=["POST"])
+@solo_admin
+def tipificaciones_renombrar(tipificacion_id):
+
+    error, anterior, producto = agentes_service.renombrar_tipificacion(
+        tipificacion_id, request.form.get("nombre", "")
+    )
+
+    if error:
+
+        flash(error)
+
+    else:
+
+        nuevo = " ".join(request.form.get("nombre", "").split())[:80]
+
+        # Los documentos de ese producto que tenían la categoría vieja
+        # pasan al nombre nuevo
+        cambiados = 0
+
+        with LOCK:
+
+            documentos = cargar_documentos()
+
+            for doc in documentos:
+
+                if (
+                    doc.get("categoria") == anterior
+                    and agent_service.normalizar_producto(doc.get("producto"), "") == producto
+                ):
+                    doc["categoria"] = nuevo
+                    cambiados += 1
+
+            if cambiados:
+                guardar_documentos(documentos)
+
+        flash(
+            f"Tipificación renombrada a «{nuevo}»"
+            + (f" ({cambiados} documento(s) actualizados)." if cambiados else ".")
+        )
+
+    return redirect(url_for("agentes") + "#tipificaciones")
+
+
+@app.route("/tipificaciones/<int:tipificacion_id>/eliminar", methods=["POST"])
+@solo_admin
+def tipificaciones_eliminar(tipificacion_id):
+
+    error, producto, nombre = agentes_service.eliminar_tipificacion(
+        tipificacion_id
+    )
+
+    if error:
+
+        flash(error)
+
+    else:
+
+        usados = sum(
+            1 for d in cargar_documentos()
+            if d.get("categoria") == nombre
+            and agent_service.normalizar_producto(d.get("producto"), "") == producto
+        )
+
+        flash(
+            f"Tipificación «{nombre}» eliminada junto con su agente."
+            + (
+                f" {usados} documento(s) la tenían: quedan con esa categoría "
+                "hasta que los vuelvas a tipificar."
+                if usados else ""
+            )
+        )
+
+    return redirect(url_for("agentes") + "#tipificaciones")
+
+
+def retipificar_pendientes():
+    """
+    Vuelve a tipificar con IA la categoría y subcategoría de los documentos
+    cuyo producto tiene tipificaciones pero cuya categoría actual no es
+    ninguna de ellas. No toca nivel, fuente, descripción ni estado.
+    """
+
+    tareas = []
+
+    por_producto = agentes_service.tipificaciones_por_producto(
+        agent_service.PRODUCTOS
+    )
+
+    for doc in cargar_documentos():
+
+        producto = agent_service.normalizar_producto(doc.get("producto"), "")
+
+        if (
+            producto and por_producto.get(producto)
+            and doc.get("procesamiento") == "PROCESADO"
+            and doc.get("estado") != "Archivado"
+            and doc.get("categoria") not in por_producto[producto]
+        ):
+            tareas.append(doc["id"])
+
+    def trabajo(ids):
+
+        for doc_id in ids:
+
+            try:
+                tipificar_documento(
+                    doc_id, campos=["categoria", "subcategoria"],
+                    sobrescribir=True, limpiar_invalida=True
+                )
+            except Exception as e:
+                print(f"[{doc_id}] Error re-tipificando: {e}")
+
+    if tareas:
+        COLA_PROCESAMIENTO.submit(trabajo, tareas)
+
+    return len(tareas)
+
+
+@app.route("/tipificaciones/retipificar", methods=["POST"])
+@solo_admin
+def tipificaciones_retipificar():
+
+    if not client:
+
+        flash("Falta configurar la IA en el servidor.")
+
+        return redirect(url_for("agentes") + "#tipificaciones")
+
+    cantidad = retipificar_pendientes()
+
+    flash(
+        f"Se están tipificando {cantidad} documento(s) con las tipificaciones "
+        "nuevas (solo categoría y subcategoría). Puede tardar unos minutos."
+        if cantidad else
+        "No hay documentos para re-tipificar: todos tienen una categoría "
+        "válida de su producto (o su producto todavía no tiene tipificaciones)."
+    )
+
+    return redirect(url_for("agentes") + "#tipificaciones")
 
 
 @app.route("/agentes/<int:agente_id>/editar", methods=["POST"])
@@ -2176,6 +2344,8 @@ def knowledge_upload():
 
         producto = _valor_de_lista(campos["producto"], indice)
 
+        producto = agent_service.normalizar_producto(producto, producto)
+
         # "Automático (IA)" o sin elegir = lo completa la IA (si está activada)
         valores = {
             nombre_campo: _valor_de_lista(campos[nombre_campo], indice)
@@ -2194,6 +2364,13 @@ def knowledge_upload():
 
                 if nombre_campo != "producto":
                     a_completar.append(nombre_campo)
+
+        # La categoría tiene que ser una tipificación del producto elegido
+        if valores["categoria"] and producto in agent_service.PRODUCTOS:
+
+            valores["categoria"] = enrutador_service.categoria_canonica(
+                valores["categoria"], agentes_service.tipificaciones(producto)
+            )
 
         estado_elegido = _valor_de_lista(campos["estado"], indice)
 
@@ -2739,9 +2916,18 @@ def knowledge_editar(doc_id):
 
         return redirect(url_for("knowledge"))
 
+    if producto:
+        validas = agentes_service.tipificaciones(producto)
+    else:
+        # Sin producto: se acepta cualquier tipificación de cualquier producto
+        validas = sorted({
+            c for p in agent_service.PRODUCTOS
+            for c in agentes_service.tipificaciones(p)
+        })
+
     cambios = {
         "producto": producto,
-        "categoria": categoria if categoria in tipificador_service.CATEGORIAS else "",
+        "categoria": categoria if categoria in validas else "",
         "subcategoria": campo("subcategoria")[:80],
         "nivel": nivel if nivel in tipificador_service.NIVELES else "",
         "estado": estado,
