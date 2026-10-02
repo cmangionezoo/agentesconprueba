@@ -1547,14 +1547,55 @@ def usuarios_eliminar(usuario_id):
     return redirect(url_for("usuarios"))
 
 
+def agente_pausado():
+    return conversation_service.obtener_ajuste("agente_pausado", "0") == "1"
+
+
+def _datos_resumen():
+
+    vigentes = sum(
+        1 for d in cargar_documentos()
+        if (d.get("estado") == "Vigente"
+            and d.get("procesamiento", "PROCESADO") == "PROCESADO")
+    )
+
+    return {
+        "resumen": conversation_service.resumen_rapido(),
+        "pausado": agente_pausado(),
+        "docs_vigentes": vigentes,
+    }
+
+
 @app.route("/")
 def home():
-    return render_seccion(None)
+    return render_seccion(None, **_datos_resumen())
 
 
 @app.route("/agentes")
 def agentes():
-    return render_seccion("agentes")
+    return render_seccion("agentes", **_datos_resumen())
+
+
+@app.route("/agentes/pausar", methods=["POST"])
+@solo_admin
+def agentes_pausar():
+    """
+    Pausa o reanuda al agente en WhatsApp. Pausado, el webhook de uContact
+    no usa la IA y responde 'fuera_de_alcance' para que el flujo siga con
+    una persona. El Playground sigue funcionando.
+    """
+
+    pausar = not agente_pausado()
+
+    conversation_service.guardar_ajuste("agente_pausado", "1" if pausar else "0")
+
+    flash(
+        "Agente pausado: en WhatsApp ya no responde y el flujo de uContact "
+        "tiene que seguir con una persona." if pausar
+        else "Agente reanudado: vuelve a atender en WhatsApp."
+    )
+
+    return redirect(url_for("agentes"))
 
 
 @app.route("/agentes/configurar")
@@ -2242,6 +2283,19 @@ def ucontact_mensaje():
     if previa:
         return jsonify(previa)
 
+    # Agente pausado desde la pantalla Agentes: no se usa la IA
+    if agente_pausado():
+
+        return jsonify({
+            "ok": True,
+            "accion": "fuera_de_alcance",
+            "pausado": True,
+            "respuesta": "",
+            "derivar": False,
+            "cola": "",
+            "error": "El agente está pausado."
+        })
+
     sesion = ucontact_service.buscar_sesion(external_id)
 
     # Conversación ya derivada: no se vuelve a llamar a la IA
@@ -2664,6 +2718,7 @@ def health():
         "login_configurado": usuarios_service.cantidad() > 0,
         "conexiones_cifrado_ok": crypto_service.disponible(),
         "conexiones_clave_origen": crypto_service.origen_de_la_clave(),
+        "agente_pausado": agente_pausado(),
         "sync_intervalo_min": SYNC_INTERVALO_MIN,
         "whatsapp_incluye_pendientes": WHATSAPP_INCLUIR_PENDIENTES,
         "productos": agent_service.PRODUCTOS,
