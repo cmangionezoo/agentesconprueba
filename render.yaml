@@ -28,6 +28,11 @@ services:
       # Se cargan a mano en el panel de Render (no van en el código):
       - key: OPENAI_API_KEY
         sync: false
+      # Administrador inicial (los demás usuarios se crean desde la plataforma):
+      - key: ADMIN_USUARIO
+        sync: false
+      - key: ADMIN_CLAVE
+        sync: false
       - key: UCONTACT_API_KEY
         sync: false
       - key: UCONTACT_COLAS
