@@ -1061,6 +1061,13 @@ class SyncHost:
             return any(d.get("id") == doc_id for d in cargar_documentos())
 
     def crear(self, doc_id, ruta_pdf, datos):
+        """Crea el documento y devuelve el estado con el que quedó."""
+
+        # "Vigente automático": entra Vigente, salvo que no se sepa su
+        # producto (sin producto, el agente lo usaría en TODOS los productos).
+        vigente = bool(datos.get("vigente_auto")) and bool(datos.get("producto"))
+
+        estado = "Vigente" if vigente else "Pendiente de revisión"
 
         documento = {
             "id": doc_id,
@@ -1071,7 +1078,7 @@ class SyncHost:
             "categoria": "",
             "subcategoria": "",
             "nivel": "L1",
-            "estado": "Pendiente de revisión",
+            "estado": estado,
             "fuente": "Otro",
             "descripcion": "",
             "ruta_origen": datos["ruta_origen"],
@@ -1090,11 +1097,13 @@ class SyncHost:
             guardar_documentos(documentos)
 
         cfg = (
-            {"sobrescribir": True, "forzar_pendiente": True}
+            {"sobrescribir": True, "forzar_pendiente": not vigente}
             if datos["tipificar_ia"] else None
         )
 
         COLA_PROCESAMIENTO.submit(procesar_y_tipificar, doc_id, ruta_pdf, cfg)
+
+        return estado
 
     def actualizar(self, doc_id, ruta_pdf, datos):
 
@@ -1135,9 +1144,12 @@ class SyncHost:
                 "procesamiento": "PROCESANDO",
                 "error": "",
                 "advertencia": "",
-                # El contenido cambió: vuelve a revisión
-                "estado": "Pendiente de revisión",
             })
+
+            # El contenido cambió: con "Vigente automático" conserva su
+            # estado; si no, vuelve a revisión.
+            if not datos.get("vigente_auto"):
+                doc["estado"] = "Pendiente de revisión"
 
             if not doc.get("producto") and datos["producto"]:
                 doc["producto"] = datos["producto"]
@@ -1145,7 +1157,10 @@ class SyncHost:
             guardar_documentos(documentos)
 
         cfg = (
-            {"sobrescribir": True, "forzar_pendiente": True}
+            {
+                "sobrescribir": True,
+                "forzar_pendiente": not datos.get("vigente_auto")
+            }
             if retipificar else None
         )
 
@@ -1686,6 +1701,7 @@ def _datos_conexion_del_form(tipo_forzado=None):
         "tipo": tipo, "nombre": nombre, "url": url, "producto": producto,
         "auto": request.form.get("auto") == "1",
         "tipificar_ia": request.form.get("tipificar_ia") == "1",
+        "auto_vigente": request.form.get("auto_vigente") == "1",
     }, ""
 
 
@@ -1721,7 +1737,8 @@ def conexiones_crear():
 
     conexiones_service.crear(
         datos["tipo"], datos["nombre"], datos["url"], datos["producto"],
-        datos["auto"], datos["tipificar_ia"], secreto
+        datos["auto"], datos["tipificar_ia"], secreto,
+        auto_vigente=datos["auto_vigente"]
     )
 
     flash("Conexión creada. Probala y después sincronizá.")
@@ -1763,7 +1780,8 @@ def conexiones_editar(conexion_id):
 
     conexiones_service.actualizar(
         conexion_id, datos["nombre"], datos["url"], datos["producto"],
-        datos["auto"], datos["tipificar_ia"], secreto
+        datos["auto"], datos["tipificar_ia"], secreto,
+        auto_vigente=datos["auto_vigente"]
     )
 
     flash("Conexión actualizada.")
@@ -1798,8 +1816,62 @@ def conexiones_sincronizar(conexion_id):
         encolar_sincronizacion(conexion_id)
         flash(
             "Sincronización iniciada. Los documentos nuevos van a aparecer "
-            "en la Knowledge Base como Pendientes de revisión."
+            "en la Knowledge Base; la página se actualiza sola."
         )
+
+    return redirect(url_for("conexiones"))
+
+
+@app.route("/conexiones/<int:conexion_id>/publicar", methods=["POST"])
+@solo_admin
+def conexiones_publicar(conexion_id):
+    """
+    Pasa a Vigente los documentos de esta conexión que quedaron Pendientes
+    de revisión (por ejemplo, sincronizados antes de activar el Vigente
+    automático). Los que no tienen producto se dejan Pendientes.
+    """
+
+    if not conexiones_service.obtener(conexion_id):
+
+        flash("No se encontró la conexión.")
+
+        return redirect(url_for("conexiones"))
+
+    publicados = sin_producto = 0
+
+    with LOCK:
+
+        documentos = cargar_documentos()
+
+        for doc in documentos:
+
+            origen = doc.get("origen") or {}
+
+            if (
+                origen.get("conexion_id") != conexion_id
+                or doc.get("estado") != "Pendiente de revisión"
+                or doc.get("procesamiento") != "PROCESADO"
+            ):
+                continue
+
+            if not doc.get("producto"):
+                sin_producto += 1
+                continue
+
+            doc["estado"] = "Vigente"
+            publicados += 1
+
+        if publicados:
+            guardar_documentos(documentos)
+
+    flash(
+        f"{publicados} documento(s) pasaron a Vigente."
+        + (
+            f" {sin_producto} quedaron Pendientes porque no tienen producto: "
+            "editalos y asignales uno."
+            if sin_producto else ""
+        )
+    )
 
     return redirect(url_for("conexiones"))
 
@@ -2548,14 +2620,12 @@ def knowledge_tipificar(doc_id):
 
         return redirect(url_for("knowledge"))
 
-    error = tipificar_documento(
-        doc_id, sobrescribir=True, forzar_pendiente=True
-    )
+    error = tipificar_documento(doc_id, sobrescribir=True)
 
     flash(
         error or
-        "Documento tipificado con IA. Quedó Pendiente de revisión: "
-        "revisalo y confirmalo."
+        "Documento tipificado con IA. Revisá la clasificación y corregila "
+        "con ✏ Editar si hace falta."
     )
 
     return redirect(url_for("knowledge"))
