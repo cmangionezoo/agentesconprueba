@@ -2102,7 +2102,7 @@
                                         <form action="/knowledge/documento/{{ documento.id }}/tipificar"
                                               method="POST"
                                               style="margin:0;"
-                                              onsubmit="return confirm('La IA va a volver a decidir categoría, subcategoría, nivel, fuente y descripción, y el documento queda Pendiente de revisión. ¿Seguir?')">
+                                              onsubmit="return confirm('La IA va a volver a decidir categoría, subcategoría, nivel, fuente y descripción (el estado no cambia). ¿Seguir?')">
                                             <button class="secondary" type="submit">
                                                 🤖 Tipificar con IA
                                             </button>
@@ -2593,9 +2593,10 @@
 
             <p class="muted">
                 Cada conexión usa su propia cuenta. Los archivos nuevos o
-                modificados se incorporan como <strong>Pendientes de revisión</strong>
-                (el agente en WhatsApp no los usa hasta que los confirmes)
-                y los que se quitan de la carpeta se archivan.
+                modificados se incorporan según la opción de cada conexión:
+                <strong>Vigentes</strong> enseguida (el agente los usa en cuanto se
+                procesan) o <strong>Pendientes de revisión</strong> hasta que los
+                confirmes. Los que se quitan de la carpeta se archivan.
                 {% if sync_intervalo and sync_intervalo > 0 %}
                 Las conexiones con sincronización automática se revisan cada
                 {{ sync_intervalo }} minutos.
@@ -2645,7 +2646,8 @@
                             <td>
                                 <small>
                                     {{ "Automática" if c.auto else "Manual" }}<br>
-                                    {{ "Tipifica con IA" if c.tipificar_ia else "Sin IA" }}
+                                    {{ "Tipifica con IA" if c.tipificar_ia else "Sin IA" }}<br>
+                                    {{ "Entran Vigentes" if c.auto_vigente else "Entran Pendientes" }}
                                 </small>
                             </td>
                             <td>
@@ -2671,6 +2673,15 @@
                                         <button type="submit" class="primary"
                                                 {% if c.sincronizando or not c.activa %}disabled{% endif %}>
                                             Sincronizar ahora
+                                        </button>
+                                    </form>
+
+                                    <form method="POST"
+                                          action="/conexiones/{{ c.id }}/publicar"
+                                          onsubmit="return confirm('Los documentos de esta conexión que están Pendientes de revisión pasan a Vigente y el agente en WhatsApp los empieza a usar. ¿Seguir?')">
+                                        <button type="submit" class="secondary"
+                                                title="Pasa a Vigente lo que quedó Pendiente">
+                                            Pasar pendientes a Vigente
                                         </button>
                                     </form>
 
@@ -2737,6 +2748,10 @@
                                         <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
                                             <input type="checkbox" name="tipificar_ia" value="1" style="width:auto;" {% if c.tipificar_ia %}checked{% endif %}>
                                             Tipificar con IA
+                                        </label>
+                                        <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
+                                            <input type="checkbox" name="auto_vigente" value="1" style="width:auto;" {% if c.auto_vigente %}checked{% endif %}>
+                                            Entran Vigentes automáticamente
                                         </label>
                                     </div>
 
@@ -2873,6 +2888,10 @@
                     <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
                         <input type="checkbox" name="tipificar_ia" value="1" style="width:auto;" checked>
                         Tipificar con IA (categoría, subcategoría, nivel, fuente y descripción)
+                    </label>
+                    <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
+                        <input type="checkbox" name="auto_vigente" value="1" style="width:auto;" checked>
+                        Entran Vigentes automáticamente (si no se sabe el producto, quedan Pendientes)
                     </label>
                 </div>
 
