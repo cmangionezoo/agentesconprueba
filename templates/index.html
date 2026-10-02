@@ -677,22 +677,22 @@
         <div class="grid-4">
 
             <div class="stat">
-                <div class="stat-number">1</div>
+                <div class="stat-number">{{ 0 if pausado else 1 }}</div>
                 <div class="stat-label">Agentes activos</div>
             </div>
 
             <div class="stat">
-                <div class="stat-number">1</div>
-                <div class="stat-label">Knowledge Bases</div>
+                <div class="stat-number">{{ docs_vigentes }}</div>
+                <div class="stat-label">Documentos vigentes en la KB</div>
             </div>
 
             <div class="stat">
-                <div class="stat-number">0</div>
+                <div class="stat-number">{{ resumen.hoy }}</div>
                 <div class="stat-label">Conversaciones hoy</div>
             </div>
 
             <div class="stat">
-                <div class="stat-number">0%</div>
+                <div class="stat-number">{{ resumen.pct_resueltas }}</div>
                 <div class="stat-label">Resolución IA</div>
             </div>
 
@@ -714,7 +714,11 @@
                 {% for p in productos %}
                 <span class="tag">{{ p }}</span>
                 {% endfor %}
+                {% if pausado %}
+                <span class="tag yellow">Pausado</span>
+                {% else %}
                 <span class="tag green">Activo</span>
+                {% endif %}
                 <span class="tag gray">L1</span>
                 <span class="tag gray">WhatsApp</span>
 
@@ -762,10 +766,16 @@
                     Playground
                 </a>
 
-                <button class="danger"
-                        onclick="alert('El agente fue pausado')">
-                    Pausar
-                </button>
+                {% if usuario_actual and usuario_actual.rol == "admin" %}
+                <form method="POST"
+                      action="/agentes/pausar"
+                      style="margin:0;"
+                      onsubmit="return confirm('{{ 'El agente vuelve a atender en WhatsApp. ¿Reanudar?' if pausado else 'En WhatsApp el agente deja de responder y el flujo de uContact tiene que seguir con una persona. ¿Pausar?' }}')">
+                    <button class="{{ 'primary' if pausado else 'danger' }}" type="submit">
+                        {{ "Reanudar" if pausado else "Pausar" }}
+                    </button>
+                </form>
+                {% endif %}
 
             </div>
 
@@ -775,26 +785,33 @@
         <div class="grid-4">
 
             <div class="stat">
-                <div class="stat-number">1.284</div>
+                <div class="stat-number">{{ resumen.total }}</div>
                 <div class="stat-label">Conversaciones</div>
             </div>
 
             <div class="stat">
-                <div class="stat-number">78%</div>
-                <div class="stat-label">Resueltas</div>
+                <div class="stat-number">{{ resumen.pct_resueltas }}</div>
+                <div class="stat-label">Resueltas por IA ({{ resumen.resueltas }})</div>
             </div>
 
             <div class="stat">
-                <div class="stat-number">22%</div>
-                <div class="stat-label">Derivadas</div>
+                <div class="stat-number">{{ resumen.pct_derivadas }}</div>
+                <div class="stat-label">Derivadas ({{ resumen.derivadas }})</div>
             </div>
 
             <div class="stat">
-                <div class="stat-number">Activo</div>
+                <div class="stat-number">{{ "Pausado" if pausado else "Activo" }}</div>
                 <div class="stat-label">Estado</div>
             </div>
 
         </div>
+
+        <p class="muted" style="margin:-4px 4px 18px;">
+            Datos reales de las conversaciones guardadas
+            (incluyen las pruebas del Playground; {{ resumen.en_curso }} en curso).
+            El detalle por canal, producto y categoría está en
+            <a href="/metricas">Métricas</a>.
+        </p>
 
 
         <div class="card">
