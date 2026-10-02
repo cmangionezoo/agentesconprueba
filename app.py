@@ -39,7 +39,7 @@ from services import (
     agent_service, conversation_service, ucontact_service, usuarios_service,
     conexiones_service, crypto_service, proveedores_nube,
     sincronizacion_service, tipificador_service,
-    agentes_service, enrutador_service
+    agentes_service, enrutador_service, knowledge_service
 )
 from services.tipificador_service import ErrorTipificacion
 from services.mock_client import MockClient
@@ -940,6 +940,61 @@ def atender_con_agentes(
     )
 
 
+def cobertura_kb():
+    """
+    Cuánta documentación usable tiene cada agente.
+
+    - "usables": documentos Vigentes, procesados, de nivel L1/Todos y del
+      producto (o compartidos), que es lo que el agente puede usar.
+    - por tipificación: cuántos de esos son de esa categoría.
+    - "sin_categoria_valida": documentos del producto que no tienen ninguna
+      de las tipificaciones del producto como categoría.
+    """
+
+    documentos = cargar_documentos()
+
+    resultado = {}
+
+    for producto in agent_service.PRODUCTOS:
+
+        lista = agentes_service.tipificaciones(producto)
+
+        claves = {knowledge_service.normalizar(c): c for c in lista}
+
+        por_categoria = {c: 0 for c in lista}
+
+        usables = 0
+        sin_valida = 0
+
+        for doc in documentos:
+
+            propio = knowledge_service._clave_producto(doc.get("producto"))
+
+            es_del_producto = propio == knowledge_service._clave_producto(producto)
+
+            if es_del_producto and doc.get("estado") != "Archivado":
+
+                if knowledge_service.normalizar(doc.get("categoria") or "") not in claves:
+                    sin_valida += 1
+
+            if knowledge_service.documento_elegible(doc, False, producto):
+
+                usables += 1
+
+                cat = claves.get(knowledge_service.normalizar(doc.get("categoria") or ""))
+
+                if cat:
+                    por_categoria[cat] += 1
+
+        resultado[producto] = {
+            "usables": usables,
+            "por_categoria": por_categoria,
+            "sin_categoria_valida": sin_valida,
+        }
+
+    return resultado
+
+
 def agentes_con_metricas():
     """Lista de agentes con sus números, para la pantalla Agentes."""
 
@@ -950,10 +1005,22 @@ def agentes_con_metricas():
         "pasadas": 0, "pct_resueltas": "—", "pct_derivadas": "—",
     }
 
-    return [
-        dict(agente, **numeros.get(agente["id"], vacio))
-        for agente in agentes_service.listar()
-    ]
+    cobertura = cobertura_kb()
+
+    lista = []
+
+    for agente in agentes_service.listar():
+
+        datos = cobertura.get(agente["producto"], {})
+
+        docs = (
+            datos.get("por_categoria", {}).get(agente["categoria"], 0)
+            if agente["categoria"] else datos.get("usables", 0)
+        )
+
+        lista.append(dict(agente, docs=docs, **numeros.get(agente["id"], vacio)))
+
+    return lista
 
 
 # ============================================================
@@ -1706,6 +1773,7 @@ def _datos_resumen():
         "docs_vigentes": vigentes,
         "agentes": agentes_con_metricas(),
         "lista_tipificaciones": agentes_service.listar_tipificaciones(),
+        "cobertura": cobertura_kb(),
     }
 
 
