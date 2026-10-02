@@ -108,10 +108,45 @@ def init_db(ruta):
             ON consultas_kb (conversacion_id);
         """)
 
+        # Bases creadas antes de existir los agentes por producto/categoría
+        def agregar(tabla, columna, definicion):
+
+            existentes = [
+                f["name"] for f in db.execute(f"PRAGMA table_info({tabla})")
+            ]
+
+            if columna not in existentes:
+                db.execute(f"ALTER TABLE {tabla} ADD COLUMN {columna} {definicion}")
+
+        agregar("conversaciones", "agente_id", "INTEGER DEFAULT 0")
+        agregar("conversaciones", "agente_nombre", "TEXT DEFAULT ''")
+        agregar("conversaciones", "agente_inicial_id", "INTEGER DEFAULT 0")
+        agregar("conversaciones", "reasignaciones", "INTEGER DEFAULT 0")
+        agregar("mensajes", "agente", "TEXT DEFAULT ''")
+
 
 # ============================================================
 # GUARDAR UN TURNO
 # ============================================================
+
+def agente_de(conversacion_id):
+    """(id del agente actual, reasignaciones) de una conversación."""
+
+    if not conversacion_id:
+        return 0, 0
+
+    with _conectar() as db:
+
+        fila = db.execute(
+            "SELECT agente_id, reasignaciones FROM conversaciones WHERE id = ?",
+            (conversacion_id,)
+        ).fetchone()
+
+    if not fila:
+        return 0, 0
+
+    return fila["agente_id"] or 0, fila["reasignaciones"] or 0
+
 
 def guardar_turno(
     conversacion_id,
@@ -186,14 +221,15 @@ def guardar_turno(
         db.execute(
             "INSERT INTO mensajes "
             "(conversacion_id, orden, rol, texto, fecha, etapa, "
-            "fragmentos_json) VALUES (?, ?, 'agente', ?, ?, ?, ?)",
+            "fragmentos_json, agente) VALUES (?, ?, 'agente', ?, ?, ?, ?, ?)",
             (
                 conversacion_id,
                 orden + 1,
                 resultado["respuesta"],
                 ahora,
                 estado.get("etapa", ""),
-                json.dumps(resultado.get("fragmentos", []), ensure_ascii=False)
+                json.dumps(resultado.get("fragmentos", []), ensure_ascii=False),
+                (resultado.get("agente") or {}).get("nombre", "")
             )
         )
 
@@ -228,7 +264,8 @@ def guardar_turno(
                 subcategoria = ?, etapa = ?, resultado = ?, problema = ?,
                 diagnostico = ?, solucion = ?, intentos = ?, derivada = ?,
                 destino = ?, motivo = ?, mensajes = ?, turnos_sin_kb = ?,
-                estado_json = ?, resumen_json = ?
+                estado_json = ?, resumen_json = ?,
+                agente_id = ?, agente_nombre = ?, reasignaciones = ?
             WHERE id = ?
             """,
             (
@@ -251,9 +288,19 @@ def guardar_turno(
                 json.dumps(estado, ensure_ascii=False),
                 json.dumps(resultado.get("resumen_tecnico"), ensure_ascii=False)
                 if resultado.get("resumen_tecnico") else "",
+                (resultado.get("agente") or {}).get("id", 0),
+                (resultado.get("agente") or {}).get("nombre", ""),
+                int(resultado.get("reasignaciones") or 0),
                 conversacion_id
             )
         )
+
+        # El primer agente de la conversación (el de recepción)
+        if not existe and resultado.get("agente_inicial"):
+            db.execute(
+                "UPDATE conversaciones SET agente_inicial_id = ? WHERE id = ?",
+                (resultado["agente_inicial"], conversacion_id)
+            )
 
     return conversacion_id
 
@@ -296,6 +343,7 @@ def listar_conversaciones(canal=None, limite=30):
             "id": f["id"],
             "canal": f["canal"],
             "producto": f["producto"] or "-",
+            "agente": f["agente_nombre"] or "-",
             "fecha": f["creada"].replace("T", " ") + " UTC",
             "categoria": f["categoria"] or "Sin clasificar",
             "subcategoria": f["subcategoria"],
@@ -322,7 +370,7 @@ def obtener_transcripcion(conversacion_id):
             return None
 
         mensajes = db.execute(
-            "SELECT rol, texto, fecha FROM mensajes "
+            "SELECT rol, texto, fecha, agente FROM mensajes "
             "WHERE conversacion_id = ? ORDER BY orden",
             (conversacion_id,)
         ).fetchall()
@@ -340,7 +388,10 @@ def obtener_transcripcion(conversacion_id):
 
     for m in mensajes:
 
-        quien = "CLIENTE" if m["rol"] == "cliente" else "AGENTE"
+        quien = (
+            "CLIENTE" if m["rol"] == "cliente"
+            else f"AGENTE ({m['agente']})" if m["agente"] else "AGENTE"
+        )
 
         lineas.append(f"{quien}: {m['texto']}\n")
 
@@ -469,6 +520,66 @@ def resumen_rapido():
     }
 
 
+def metricas_por_agente_id():
+    """
+    {id_de_agente: {total, resueltas, derivadas, en_curso, pasadas}}.
+    - total/resueltas/derivadas: conversaciones que terminaron (o siguen)
+      con ese agente.
+    - pasadas: conversaciones que ese agente recibió primero y pasó a otro
+      (solo tiene sentido para los agentes de recepción).
+    """
+
+    with _conectar() as db:
+
+        filas = db.execute(
+            """
+            SELECT agente_id,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN derivada = 0 AND etapa = 'Resuelto'
+                       THEN 1 ELSE 0 END) AS resueltas,
+                   SUM(derivada) AS derivadas
+            FROM conversaciones WHERE agente_id > 0
+            GROUP BY agente_id
+            """
+        ).fetchall()
+
+        pasadas = db.execute(
+            """
+            SELECT agente_inicial_id AS agente_id, COUNT(*) AS pasadas
+            FROM conversaciones
+            WHERE agente_inicial_id > 0 AND agente_id != agente_inicial_id
+            GROUP BY agente_inicial_id
+            """
+        ).fetchall()
+
+    datos = {}
+
+    for f in filas:
+
+        total = f["total"] or 0
+        resueltas = f["resueltas"] or 0
+        derivadas = f["derivadas"] or 0
+
+        datos[f["agente_id"]] = {
+            "total": total,
+            "resueltas": resueltas,
+            "derivadas": derivadas,
+            "en_curso": total - resueltas - derivadas,
+            "pasadas": 0,
+            "pct_resueltas": _porcentaje(resueltas, total),
+            "pct_derivadas": _porcentaje(derivadas, total),
+        }
+
+    for f in pasadas:
+
+        datos.setdefault(f["agente_id"], {
+            "total": 0, "resueltas": 0, "derivadas": 0, "en_curso": 0,
+            "pasadas": 0, "pct_resueltas": "—", "pct_derivadas": "—",
+        })["pasadas"] = f["pasadas"]
+
+    return datos
+
+
 def calcular_metricas(canal=None):
 
     filtro = "WHERE canal = ?" if canal else "WHERE 1=1"
@@ -526,6 +637,21 @@ def calcular_metricas(canal=None):
                 SUM(derivada) AS derivadas
             FROM conversaciones {filtro}
             GROUP BY 1 ORDER BY total DESC
+            """
+        )
+
+        por_agente = varias(
+            f"""
+            SELECT
+                COALESCE(NULLIF(agente_nombre, ''), 'Sin agente (anteriores)')
+                    AS agente,
+                COALESCE(NULLIF(producto, ''), '-') AS producto,
+                COUNT(*) AS total,
+                SUM(CASE WHEN derivada = 0 AND etapa = 'Resuelto'
+                    THEN 1 ELSE 0 END) AS resueltas,
+                SUM(derivada) AS derivadas
+            FROM conversaciones {filtro}
+            GROUP BY 1, 2 ORDER BY producto, total DESC
             """
         )
 
@@ -603,6 +729,7 @@ def calcular_metricas(canal=None):
         "tiempo_promedio": _formatear_duracion(promedio),
         "por_categoria": por_categoria,
         "por_producto": por_producto,
+        "por_agente": por_agente,
         "motivos_derivacion": motivos,
         "docs_consultados": docs_consultados,
         "soluciones": soluciones,
