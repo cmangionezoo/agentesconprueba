@@ -645,11 +645,18 @@
 
         {% with mensajes = get_flashed_messages() %}
         {% if mensajes %}
-        <div class="card" style="border-left:4px solid #2563eb;">
+        <div class="card" id="flashMensajes" style="border-left:4px solid #2563eb;">
             {% for m in mensajes %}
             <p style="margin:0 0 4px 0;">{{ m }}</p>
             {% endfor %}
         </div>
+        <script>
+            // Lleva el mensaje a la vista, aunque la página recuerde otra posición
+            (function () {
+                var f = document.getElementById("flashMensajes");
+                if (f) { f.scrollIntoView({block: "start"}); }
+            })();
+        </script>
         {% endif %}
         {% endwith %}
 
@@ -2541,8 +2548,8 @@
             <p>
                 <span class="tag yellow">⚠ Falta FLASK_SECRET_KEY</span>
                 <span class="muted">
-                    Para guardar credenciales hay que definir en Render una
-                    FLASK_SECRET_KEY fija.
+                    No se pudo preparar el cifrado de las credenciales. Definí
+                    en Render una FLASK_SECRET_KEY larga y fija.
                 </span>
             </p>
             {% endif %}
@@ -2744,10 +2751,19 @@
 
             <h3>Agregar conexión</h3>
 
+            {% if not cifrado_ok %}
+            <p style="background:#fef3c7; border-radius:7px; padding:10px 12px; font-size:12px;">
+                ⚠ No se pudo preparar el cifrado de las credenciales: definí
+                <strong>FLASK_SECRET_KEY</strong> en Render (una clave larga y fija)
+                y esperá que se reinicie. Hasta entonces no se pueden guardar conexiones.
+            </p>
+            {% endif %}
+
             <form method="POST"
                   action="/conexiones/crear"
                   enctype="multipart/form-data"
-                  autocomplete="off">
+                  autocomplete="off"
+                  onsubmit="return conValidar(this)">
 
                 <div class="grid">
 
@@ -2864,10 +2880,13 @@
                 </div>
 
                 <div class="buttons">
-                    <button type="submit" class="primary" {% if not cifrado_ok %}disabled{% endif %}>
+                    <button type="submit" class="primary" id="conBoton">
                         Agregar conexión
                     </button>
                 </div>
+
+                <p id="conAviso"
+                   style="display:none; margin:10px 0 0; background:#fee2e2; color:#991b1b; border-radius:7px; padding:10px 12px; font-size:12px;"></p>
 
             </form>
 
@@ -2896,6 +2915,74 @@
             }
 
             conCambiarTipo();
+
+            function conAviso(mensaje) {
+
+                var caja = document.getElementById("conAviso");
+
+                caja.textContent = mensaje;
+                caja.style.display = "block";
+
+                caja.scrollIntoView({behavior: "smooth", block: "center"});
+            }
+
+            // Revisa lo que falta ANTES de enviar y lo dice en pantalla
+            function conValidar(formulario) {
+
+                document.getElementById("conAviso").style.display = "none";
+
+                var tipo = formulario.elements["tipo"].value;
+
+                if (!formulario.elements["nombre"].value.trim()) {
+                    conAviso("Poné un nombre para la conexión.");
+                    return false;
+                }
+
+                if (!formulario.elements["url"].value.trim()) {
+                    conAviso("Pegá la URL de la carpeta.");
+                    return false;
+                }
+
+                if (tipo === "google_drive") {
+
+                    var modo = formulario.elements["g_modo"].value;
+
+                    if (modo === "api_key") {
+
+                        if (!formulario.elements["g_api_key"].value.trim()) {
+                            conAviso("Pegá la API key.");
+                            return false;
+                        }
+
+                    } else {
+
+                        var archivo = formulario.elements["g_json_archivo"];
+
+                        if (!archivo.files || !archivo.files.length) {
+                            conAviso("Seleccioná el archivo JSON de la cuenta de servicio.");
+                            return false;
+                        }
+                    }
+
+                } else {
+
+                    if (
+                        !formulario.elements["ms_tenant"].value.trim() ||
+                        !formulario.elements["ms_client_id"].value.trim() ||
+                        !formulario.elements["ms_client_secret"].value.trim()
+                    ) {
+                        conAviso("Completá Tenant ID, Client ID y Client Secret.");
+                        return false;
+                    }
+                }
+
+                var boton = document.getElementById("conBoton");
+
+                boton.disabled = true;
+                boton.textContent = "Guardando...";
+
+                return true;
+            }
 
         </script>
 
