@@ -18,6 +18,7 @@ from services.knowledge_service import (
     buscar_fragmentos,
     categorias_disponibles,
 )
+from services.tipificador_service import CATEGORIAS
 
 
 # Productos que atiende el agente. El primero es el de por defecto.
@@ -192,8 +193,75 @@ Respondé SIEMPRE con un único objeto JSON válido, sin texto fuera del JSON:
 """.strip().replace("__MAX_INTENTOS__", str(MAX_INTENTOS))
 
 
-def _prompt_para(producto):
-    return SYSTEM_PROMPT.replace("__PRODUCTO__", producto)
+def _prompt_para(producto, agente=None):
+    """
+    Prompt del agente. `agente` (opcional) es un dict con:
+    categoria ('' = recepción), instrucciones y especialistas (lista de
+    categorías que tienen un especialista activo en este producto).
+    """
+
+    agente = agente or {}
+
+    categoria = agente.get("categoria") or ""
+    especialistas = agente.get("especialistas") or []
+    instrucciones = (agente.get("instrucciones") or "").strip()
+
+    secciones = [
+        "CATEGORÍAS VÁLIDAS\n"
+        "El campo \"categoria\" del estado tiene que ser EXACTAMENTE una de "
+        "estas: " + ", ".join(CATEGORIAS) + ". Usá \"Otros\" solo si "
+        "ninguna encaja."
+    ]
+
+    if categoria:
+
+        secciones.append(
+            "ROL DE ESTE AGENTE\n"
+            f"Sos el especialista en {categoria} de {producto}. El caso ya "
+            "fue clasificado por el agente de recepción (mirá el estado "
+            "actual). Resolvé solo consultas de esa categoría, con la "
+            "documentación que te llegue. No te presentes de nuevo ni "
+            "saludes otra vez: seguí la conversación con naturalidad, como "
+            f"el mismo asistente de {producto}. Si el cliente pasa a otro "
+            "tema que corresponde a otra categoría, poné esa categoría en "
+            "el estado y el sistema lo pasa al especialista que corresponda."
+        )
+
+    elif especialistas:
+
+        secciones.append(
+            "ROL DE ESTE AGENTE\n"
+            f"Sos el agente de recepción de {producto}. Tu tarea principal "
+            "es entender qué necesita el cliente y clasificar la consulta "
+            "(categoría y subcategoría) lo antes posible. Hay especialistas "
+            "para: " + ", ".join(especialistas) + ". En cuanto la categoría "
+            "esté clara, completala en el estado: el sistema pasa el caso "
+            "automáticamente al especialista, así que no hace falta que lo "
+            "resuelvas vos. Si todavía no está claro qué necesita, hacé UNA "
+            "pregunta corta. Para las categorías sin especialista, resolvé "
+            "el caso vos como siempre."
+        )
+
+    if instrucciones:
+
+        secciones.append(
+            "INSTRUCCIONES PROPIAS DE ESTE AGENTE (tienen prioridad sobre "
+            "las generales, salvo las reglas estrictas y el formato de "
+            "respuesta)\n" + instrucciones
+        )
+
+    texto = SYSTEM_PROMPT.replace("__PRODUCTO__", producto)
+
+    adicional = "\n\n".join(secciones)
+
+    if "FORMATO DE RESPUESTA" in texto:
+        return texto.replace(
+            "FORMATO DE RESPUESTA",
+            adicional + "\n\nFORMATO DE RESPUESTA",
+            1
+        )
+
+    return texto + "\n\n" + adicional
 
 
 # ============================================================
@@ -457,7 +525,8 @@ def responder(
     mensaje,
     estado_previo=None,
     incluir_pendientes=True,
-    producto=None
+    producto=None,
+    agente=None
 ):
 
     historial = _limpiar_historial(historial)
@@ -496,7 +565,11 @@ def responder(
         consulta,
         producto=producto,
         incluir_pendientes=incluir_pendientes,
-        categoria=str(estado_previo.get("categoria") or "") or None
+        categoria=(
+            str(estado_previo.get("categoria") or "")
+            or str((agente or {}).get("categoria") or "")
+            or None
+        )
     )
 
     categorias = categorias_disponibles(
@@ -506,7 +579,7 @@ def responder(
     )
 
     mensajes = [
-        {"role": "system", "content": _prompt_para(producto)},
+        {"role": "system", "content": _prompt_para(producto, agente)},
         {
             "role": "system",
             "content": _formatear_contexto(
