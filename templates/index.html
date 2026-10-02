@@ -1,0 +1,2900 @@
+<!DOCTYPE html>
+
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {% if hay_procesando %}<meta http-equiv="refresh" content="10">{% endif %}
+
+<title>Zoo Logic AI Agents</title>
+
+<style>
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        margin: 0;
+        font-family: Verdana, Arial, sans-serif;
+        background: #f5f7fb;
+        color: #1f2937;
+    }
+
+    .layout {
+        display: flex;
+        min-height: 100vh;
+    }
+
+    /* SIDEBAR */
+
+    .sidebar {
+        width: 245px;
+        background: #111827;
+        color: white;
+        padding: 25px 15px;
+    }
+
+    .logo {
+        font-size: 21px;
+        font-weight: bold;
+        padding: 0 12px 30px;
+    }
+
+    .logo span {
+        color: #3b82f6;
+    }
+
+    .menu-title {
+        font-size: 11px;
+        color: #9ca3af;
+        padding: 10px 12px;
+        text-transform: uppercase;
+    }
+
+    .menu a {
+        display: block;
+        color: #d1d5db;
+        text-decoration: none;
+        padding: 12px;
+        border-radius: 7px;
+        margin-bottom: 4px;
+        font-size: 14px;
+    }
+
+    .menu a:hover,
+    .menu a.active {
+        background: #1f2937;
+        color: white;
+    }
+
+    /* MAIN */
+
+    .main {
+        flex: 1;
+    }
+
+    .topbar {
+        background: white;
+        border-bottom: 1px solid #e5e7eb;
+        padding: 22px 30px;
+    }
+
+    .topbar h1 {
+        margin: 0;
+        font-size: 23px;
+    }
+
+    .content {
+        padding: 30px;
+        max-width: 1250px;
+    }
+
+    /* CARDS */
+
+    .card {
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 22px;
+        margin-bottom: 20px;
+    }
+
+    .card h2 {
+        margin-top: 0;
+        font-size: 18px;
+    }
+
+    .card h3 {
+        margin-top: 0;
+        font-size: 15px;
+    }
+
+    .muted {
+        color: #6b7280;
+        font-size: 13px;
+    }
+
+    /* GRID */
+
+    .grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 18px;
+    }
+
+    .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+    }
+
+    .grid-4 {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 18px;
+    }
+
+    /* INPUTS */
+
+    label {
+        display: block;
+        font-size: 13px;
+        font-weight: bold;
+        margin-bottom: 7px;
+    }
+
+    input,
+    select,
+    textarea {
+        width: 100%;
+        border: 1px solid #d1d5db;
+        border-radius: 7px;
+        padding: 11px;
+        font-family: inherit;
+        font-size: 13px;
+        background: white;
+    }
+
+    textarea {
+        min-height: 110px;
+        resize: vertical;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+        outline: none;
+        border-color: #3b82f6;
+    }
+
+    /* BUTTONS */
+
+    .buttons {
+        display: flex;
+        gap: 10px;
+        margin-top: 20px;
+    }
+
+    button,
+    .button {
+        border: none;
+        border-radius: 7px;
+        padding: 11px 17px;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 13px;
+        text-decoration: none;
+        display: inline-block;
+    }
+
+    .primary {
+        background: #2563eb;
+        color: white;
+    }
+
+    .secondary {
+        background: #e5e7eb;
+        color: #374151;
+    }
+
+    .danger {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+
+    /* TAGS */
+
+    .tags {
+        display: flex;
+        gap: 7px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+    }
+
+    .tag {
+        background: #eff6ff;
+        color: #1d4ed8;
+        border-radius: 20px;
+        padding: 5px 9px;
+        font-size: 11px;
+    }
+
+    .tag.green {
+        background: #ecfdf5;
+        color: #047857;
+    }
+
+    .tag.gray {
+        background: #f3f4f6;
+        color: #4b5563;
+    }
+
+    .tag.yellow {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    /* STATS */
+
+    .stat {
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 20px;
+    }
+
+    .stat-number {
+        font-size: 25px;
+        font-weight: bold;
+    }
+
+    .stat-label {
+        font-size: 12px;
+        color: #6b7280;
+        margin-top: 5px;
+    }
+
+    /* CHECKBOX */
+
+    .check-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .check-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        font-size: 13px;
+    }
+
+    .check-item input {
+        width: auto;
+        margin-top: 2px;
+    }
+
+    /* ROUTING */
+
+    .routing-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+
+    .routing-table th,
+    .routing-table td {
+        border-bottom: 1px solid #e5e7eb;
+        padding: 12px 8px;
+        text-align: left;
+    }
+
+    .routing-table th {
+        color: #6b7280;
+        font-size: 11px;
+        text-transform: uppercase;
+    }
+
+    .route {
+        font-weight: bold;
+        color: #2563eb;
+    }
+
+    /* FLOW */
+
+    .flow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .flow-step {
+        background: #f3f4f6;
+        border-radius: 7px;
+        padding: 10px 12px;
+        font-size: 12px;
+        font-weight: bold;
+    }
+
+    .arrow {
+        color: #9ca3af;
+    }
+
+    /* MODAL CONTENIDO */
+
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(17, 24, 39, 0.65);
+        padding: 40px;
+    }
+
+    .modal-content {
+        background: white;
+        width: 100%;
+        max-width: 1000px;
+        height: 90vh;
+        margin: auto;
+        border-radius: 10px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .modal-header {
+        padding: 18px 22px;
+        border-bottom: 1px solid #e5e7eb;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+    }
+
+    .modal-header h2 {
+        margin: 0;
+        font-size: 18px;
+    }
+
+    .modal-close {
+        background: #e5e7eb;
+        color: #374151;
+        font-size: 20px;
+        padding: 5px 12px;
+    }
+
+    .modal-body {
+        padding: 22px;
+        overflow-y: auto;
+        flex: 1;
+    }
+
+    .pdf-text {
+        white-space: pre-wrap;
+        font-family: Verdana, Arial, sans-serif;
+        font-size: 13px;
+        line-height: 1.6;
+        color: #374151;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 7px;
+        padding: 20px;
+    }
+
+    /* PLAYGROUND - CHAT */
+
+    .pg-layout {
+        display: grid;
+        grid-template-columns: 1.6fr 1fr;
+        gap: 18px;
+        align-items: start;
+    }
+
+    .pg-chat {
+        height: 440px;
+        overflow-y: auto;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .pg-msg {
+        max-width: 85%;
+        padding: 10px 13px;
+        border-radius: 12px;
+        font-size: 13px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
+
+    .pg-msg.cliente {
+        align-self: flex-end;
+        background: #2563eb;
+        color: white;
+        border-bottom-right-radius: 3px;
+    }
+
+    .pg-msg.agente {
+        align-self: flex-start;
+        background: white;
+        color: #1f2937;
+        border: 1px solid #e5e7eb;
+        border-bottom-left-radius: 3px;
+    }
+
+    .pg-msg.sistema {
+        align-self: center;
+        background: #fef3c7;
+        color: #92400e;
+        font-size: 12px;
+    }
+
+    .pg-input {
+        display: flex;
+        gap: 10px;
+        margin-top: 12px;
+        align-items: flex-end;
+    }
+
+    .pg-input textarea {
+        flex: 1;
+        min-height: 44px;
+        max-height: 120px;
+    }
+
+    .pg-row {
+        font-size: 12px;
+        padding: 7px 0;
+        border-bottom: 1px solid #f3f4f6;
+    }
+
+    .pg-row:last-child {
+        border-bottom: none;
+    }
+
+    .pg-row strong {
+        display: block;
+        color: #6b7280;
+        font-size: 11px;
+        font-weight: normal;
+        margin-bottom: 2px;
+    }
+
+    .pg-row ul {
+        margin: 2px 0 0 0;
+        padding-left: 18px;
+    }
+
+    .pg-chip {
+        background: #eff6ff;
+        color: #1d4ed8;
+        border-radius: 20px;
+        padding: 6px 11px;
+        font-size: 11px;
+        font-family: inherit;
+        border: none;
+        cursor: pointer;
+    }
+
+    @media (max-width: 900px) {
+        .pg-layout {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    /* RESPONSIVE */
+
+    @media (max-width: 900px) {
+        .sidebar {
+            width: 200px;
+        }
+
+        .grid,
+        .grid-3,
+        .grid-4 {
+            grid-template-columns: 1fr;
+        }
+
+        .modal {
+            padding: 15px;
+        }
+
+        .modal-content {
+            height: 95vh;
+        }
+    }
+</style>
+
+</head>
+
+<body>
+
+<div class="layout">
+
+<!-- SIDEBAR -->
+
+<aside class="sidebar">
+
+    <div class="logo">
+        Zoo Logic <span>AI Agents</span>
+    </div>
+
+    <div class="menu">
+
+        <div class="menu-title">Plataforma</div>
+
+        <a href="/" class="{% if section == None %}active{% endif %}">
+            🏠 Inicio
+        </a>
+
+        <a href="/agentes"
+           class="{% if section == 'agentes' or section == 'agente_config' %}active{% endif %}">
+            🤖 Agentes
+        </a>
+
+        <a href="/knowledge"
+           class="{% if section == 'knowledge' %}active{% endif %}">
+            📚 Knowledge Base
+        </a>
+
+        <a href="/conexiones"
+           class="{% if section == 'conexiones' %}active{% endif %}">
+            🔗 Conexiones
+        </a>
+
+        <a href="/metricas"
+           class="{% if section == 'metricas' %}active{% endif %}">
+            📊 Métricas
+        </a>
+
+        <a href="/playground"
+           class="{% if section == 'playground' %}active{% endif %}">
+            🧪 Playground
+        </a>
+
+    </div>
+
+</aside>
+
+
+<!-- MAIN -->
+
+<main class="main">
+
+    <div class="topbar">
+
+        {% if section == "agente_config" %}
+            <h1>Configurar agente</h1>
+        {% elif section == "agentes" %}
+            <h1>Agentes</h1>
+        {% elif section == "knowledge" %}
+            <h1>Knowledge Base</h1>
+        {% elif section == "conexiones" %}
+            <h1>Conexiones</h1>
+        {% elif section == "metricas" %}
+            <h1>Métricas</h1>
+        {% elif section == "playground" %}
+            <h1>Playground</h1>
+        {% else %}
+            <h1>Inicio</h1>
+        {% endif %}
+
+    </div>
+
+
+    <div class="content">
+
+
+        <!-- ============================= -->
+        <!-- INICIO -->
+        <!-- ============================= -->
+
+        {% with mensajes = get_flashed_messages() %}
+        {% if mensajes %}
+        <div class="card" style="border-left:4px solid #2563eb;">
+            {% for m in mensajes %}
+            <p style="margin:0 0 4px 0;">{{ m }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        {% if section == None %}
+
+        <div class="card">
+
+            <h2>Zoo Logic AI Agents</h2>
+
+            <p class="muted">
+                Plataforma para crear, configurar, probar y monitorear
+                agentes de inteligencia artificial para soporte.
+            </p>
+
+        </div>
+
+
+        <div class="grid-4">
+
+            <div class="stat">
+                <div class="stat-number">1</div>
+                <div class="stat-label">Agentes activos</div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-number">1</div>
+                <div class="stat-label">Knowledge Bases</div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-number">0</div>
+                <div class="stat-label">Conversaciones hoy</div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-number">0%</div>
+                <div class="stat-label">Resolución IA</div>
+            </div>
+
+        </div>
+
+
+        <!-- ============================= -->
+        <!-- AGENTES -->
+        <!-- ============================= -->
+
+        {% elif section == "agentes" %}
+
+        <div class="card">
+
+            <h2>Agente Técnico L1</h2>
+
+            <div class="tags">
+
+                {% for p in productos %}
+                <span class="tag">{{ p }}</span>
+                {% endfor %}
+                <span class="tag green">Activo</span>
+                <span class="tag gray">L1</span>
+                <span class="tag gray">WhatsApp</span>
+
+            </div>
+
+            <p class="muted">
+                Agente especializado en soporte técnico de primer nivel
+                para Dragonfish, zNube, Lince y Pantera.
+            </p>
+
+            <div class="grid">
+
+                <div>
+                    <strong>Modelo</strong>
+                    <p class="muted">OpenAI</p>
+                </div>
+
+                <div>
+                    <strong>Knowledge Base</strong>
+                    <p class="muted">Dragonfish, zNube, Lince y Pantera</p>
+                </div>
+
+                <div>
+                    <strong>Nivel</strong>
+                    <p class="muted">Soporte L1</p>
+                </div>
+
+                <div>
+                    <strong>Canal</strong>
+                    <p class="muted">WhatsApp</p>
+                </div>
+
+            </div>
+
+
+            <div class="buttons">
+
+                <a class="button primary"
+                   href="/agentes/configurar">
+                    Configurar
+                </a>
+
+                <a class="button secondary"
+                   href="/playground">
+                    Playground
+                </a>
+
+                <button class="danger"
+                        onclick="alert('El agente fue pausado')">
+                    Pausar
+                </button>
+
+            </div>
+
+        </div>
+
+
+        <div class="grid-4">
+
+            <div class="stat">
+                <div class="stat-number">1.284</div>
+                <div class="stat-label">Conversaciones</div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-number">78%</div>
+                <div class="stat-label">Resueltas</div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-number">22%</div>
+                <div class="stat-label">Derivadas</div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-number">Activo</div>
+                <div class="stat-label">Estado</div>
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <h2>Próximamente</h2>
+
+            <div class="grid">
+
+                <div>
+
+                    <h3>Agente Ecommerce</h3>
+
+                    <p class="muted">
+                        Soporte técnico para integraciones Ecommerce,
+                        Tienda Nube y plataformas relacionadas.
+                    </p>
+
+                </div>
+
+                <div>
+
+                    <h3>Agente Facturación Electrónica</h3>
+
+                    <p class="muted">
+                        Diagnóstico y asistencia sobre facturación
+                        electrónica y servicios asociados.
+                    </p>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- ============================= -->
+        <!-- CONFIGURACIÓN DEL AGENTE -->
+        <!-- ============================= -->
+
+        {% elif section == "agente_config" %}
+
+        <div class="card">
+
+            <h2>Identidad del agente</h2>
+
+            <p class="muted">
+                Definí quién es el agente, qué producto atiende
+                y por qué canal trabaja.
+            </p>
+
+            <div class="grid">
+
+                <div>
+
+                    <label>Nombre del agente</label>
+
+                    <input type="text"
+                           value="Agente Técnico L1">
+
+                </div>
+
+                <div>
+
+                    <label>Producto</label>
+
+                    <select>
+
+                        <option selected>Dragonfish</option>
+                        <option>zNube</option>
+                        <option>Lince</option>
+                        <option>Pantera</option>
+
+                    </select>
+
+                </div>
+
+                <div>
+
+                    <label>Nivel de soporte</label>
+
+                    <select>
+
+                        <option selected>L1</option>
+                        <option>L2</option>
+                        <option>L3</option>
+
+                    </select>
+
+                </div>
+
+                <div>
+
+                    <label>Canal</label>
+
+                    <select>
+
+                        <option selected>WhatsApp</option>
+                        <option>Web</option>
+                        <option>Teams</option>
+
+                    </select>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- OBJETIVO -->
+
+        <div class="card">
+
+            <h2>Objetivo del agente</h2>
+
+            <p class="muted">
+                Definí qué debe intentar lograr durante una conversación.
+            </p>
+
+            <textarea>Atender consultas de primer nivel sobre Dragonfish, zNube, Lince y Pantera, sean errores, dudas sobre cómo hacer algo o pedidos de información. Comprender qué necesita el cliente, responder o guiar con procedimientos documentados y validar el resultado. Si la consulta no puede resolverse en L1, debe derivarla al equipo correspondiente con un resumen técnico del caso.</textarea>
+
+        </div>
+
+
+        <!-- COMPORTAMIENTO -->
+
+        <div class="card">
+
+            <h2>Comportamiento</h2>
+
+            <p class="muted">
+                Reglas que el agente debe respetar durante toda la conversación.
+            </p>
+
+            <div class="check-list">
+
+                <label class="check-item">
+                    <input type="checkbox" checked>
+                    No inventar procedimientos ni soluciones.
+                </label>
+
+                <label class="check-item">
+                    <input type="checkbox" checked>
+                    Utilizar únicamente información respaldada por la Knowledge Base.
+                </label>
+
+                <label class="check-item">
+                    <input type="checkbox" checked>
+                    Solicitar información cuando los datos del problema sean insuficientes.
+                </label>
+
+                <label class="check-item">
+                    <input type="checkbox" checked>
+                    Realizar preguntas de diagnóstico antes de proponer una solución.
+                </label>
+
+                <label class="check-item">
+                    <input type="checkbox" checked>
+                    Explicar los pasos de forma clara y ordenada.
+                </label>
+
+                <label class="check-item">
+                    <input type="checkbox" checked>
+                    Validar con el usuario si la solución funcionó.
+                </label>
+
+                <label class="check-item">
+                    <input type="checkbox" checked>
+                    Derivar cuando el problema exceda las capacidades de L1.
+                </label>
+
+            </div>
+
+        </div>
+
+
+        <!-- LIMITES -->
+
+        <div class="card">
+
+            <h2>Límites del agente</h2>
+
+            <p class="muted">
+                Acciones que el agente no debe realizar.
+            </p>
+
+            <div class="check-list">
+
+                <label class="check-item">
+                    <input type="checkbox" checked>
+                    No inventar información técnica.
+                </label>
+
+                <label class="check-item">
+                    <input type="checkbox" checked>
+                    No ejecutar modificaciones directamente sobre bases de datos.
+                </label>
+
+                <label class="check-item">
+                    <input type="checkbox" checked>
+                    No indicar procedimientos de L2 como si fueran procedimientos de L1.
+                </label>
+
+                <label class="check-item">
+                    <input type="checkbox" checked>
+                    No afirmar que un problema está resuelto sin validarlo.
+                </label>
+
+                <label class="check-item">
+                    <input type="checkbox" checked>
+                    No continuar intentando soluciones indefinidamente.
+                </label>
+
+                <label class="check-item">
+                    <input type="checkbox" checked>
+                    No responder sobre procedimientos que no estén documentados.
+                </label>
+
+            </div>
+
+        </div>
+
+
+        <!-- DIAGNÓSTICO -->
+
+        <div class="card">
+
+            <h2>Información que debe construir durante el diagnóstico</h2>
+
+            <p class="muted">
+                El agente irá completando estos datos a medida que avanza
+                la conversación.
+            </p>
+
+            <div class="grid-3">
+
+                <div>
+                    <label>Producto</label>
+                    <input type="text"
+                           value="Según el producto de la consulta"
+                           readonly>
+                </div>
+
+                <div>
+                    <label>Categoría</label>
+                    <input type="text"
+                           placeholder="Ej. Facturación Electrónica">
+                </div>
+
+                <div>
+                    <label>Subcategoría</label>
+                    <input type="text"
+                           placeholder="Ej. CAE">
+                </div>
+
+                <div>
+                    <label>Problema</label>
+                    <input type="text"
+                           placeholder="Descripción del problema">
+                </div>
+
+                <div>
+                    <label>Diagnóstico</label>
+                    <input type="text"
+                           placeholder="Diagnóstico determinado">
+                </div>
+
+                <div>
+                    <label>Resultado</label>
+                    <select>
+
+                        <option selected>Pendiente</option>
+                        <option>Resuelto</option>
+                        <option>No resuelto</option>
+
+                    </select>
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- FLUJO -->
+
+        <div class="card">
+
+            <h2>Flujo de atención</h2>
+
+            <p class="muted">
+                Secuencia general que seguirá el agente.
+            </p>
+
+            <div class="flow">
+
+                <div class="flow-step">
+                    1. Recibir problema
+                </div>
+
+                <div class="arrow">→</div>
+
+                <div class="flow-step">
+                    2. Recopilar información
+                </div>
+
+                <div class="arrow">→</div>
+
+                <div class="flow-step">
+                    3. Diagnosticar
+                </div>
+
+                <div class="arrow">→</div>
+
+                <div class="flow-step">
+                    4. Aplicar procedimiento
+                </div>
+
+                <div class="arrow">→</div>
+
+                <div class="flow-step">
+                    5. Validar
+                </div>
+
+                <div class="arrow">→</div>
+
+                <div class="flow-step">
+                    6. Resolver / Derivar
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- DERIVACIONES -->
+
+        <div class="card">
+
+            <h2>Reglas de derivación</h2>
+
+            <p class="muted">
+                Determinan cuándo el agente debe dejar de intentar resolver
+                el caso y enviarlo al equipo correspondiente.
+            </p>
+
+            <table class="routing-table">
+
+                <thead>
+
+                    <tr>
+                        <th>Situación</th>
+                        <th>Destino</th>
+                    </tr>
+
+                </thead>
+
+                <tbody>
+
+                    <tr>
+                        <td>Problema de base de datos</td>
+                        <td class="route">L2</td>
+                    </tr>
+
+                    <tr>
+                        <td>Ecommerce / Tienda Nube</td>
+                        <td class="route">Ecommerce</td>
+                    </tr>
+
+                    <tr>
+                        <td>Desarrollo / error de aplicación</td>
+                        <td class="route">Desarrollo</td>
+                    </tr>
+
+                    <tr>
+                        <td>No existe procedimiento documentado</td>
+                        <td class="route">MDA</td>
+                    </tr>
+
+                    <tr>
+                        <td>Procedimiento L1 no resuelve</td>
+                        <td class="route">L2</td>
+                    </tr>
+
+                </tbody>
+
+            </table>
+
+        </div>
+
+
+        <!-- RESUMEN DE DERIVACIÓN -->
+
+        <div class="card">
+
+            <h2>Información para la derivación</h2>
+
+            <p class="muted">
+                Cuando el agente derive un caso, deberá entregar un resumen
+                estructurado para evitar que el usuario tenga que explicar
+                nuevamente el problema.
+            </p>
+
+            <div class="grid-3">
+
+                <div>
+                    <label>Problema</label>
+                    <input type="text"
+                           placeholder="Qué informó el usuario">
+                </div>
+
+                <div>
+                    <label>Diagnóstico</label>
+                    <input type="text"
+                           placeholder="Qué se pudo determinar">
+                </div>
+
+                <div>
+                    <label>Procedimiento realizado</label>
+                    <input type="text"
+                           placeholder="Qué se intentó">
+                </div>
+
+                <div>
+                    <label>Resultado</label>
+                    <input type="text"
+                           placeholder="Qué ocurrió">
+                </div>
+
+                <div>
+                    <label>Destino</label>
+                    <select>
+
+                        <option selected>Seleccionar</option>
+                        <option>L2</option>
+                        <option>Ecommerce</option>
+                        <option>Desarrollo</option>
+                        <option>MDA</option>
+
+                    </select>
+                </div>
+
+                <div>
+                    <label>Motivo de derivación</label>
+                    <input type="text"
+                           placeholder="Por qué se deriva">
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- GUARDAR -->
+
+        <div class="buttons">
+
+            <a href="/agentes"
+               class="button secondary">
+                ← Volver
+            </a>
+
+            <button class="primary"
+                    onclick="alert('Configuración guardada correctamente')">
+                Guardar configuración
+            </button>
+
+        </div>
+
+
+        <!-- ============================= -->
+        <!-- KNOWLEDGE -->
+        <!-- ============================= -->
+
+        {% elif section == "knowledge" %}
+
+        <!-- KNOWLEDGE BASE -->
+
+        <div class="card">
+
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:20px;">
+
+                <div>
+
+                    <h2>Knowledge Base</h2>
+
+                    <p class="muted">
+                        Documentación que utilizan los agentes para diagnosticar
+                        problemas y proponer soluciones.
+                    </p>
+
+                </div>
+
+                <button class="primary"
+                        onclick="document.getElementById('uploadForm').style.display='block'">
+                    + Agregar documento
+                </button>
+
+            </div>
+
+        </div>
+
+
+        <!-- SELECTOR DE KB -->
+
+        <div class="card">
+
+            <h3>Knowledge Base seleccionada</h3>
+
+            <div class="grid">
+
+                <div>
+
+                    <label>Producto</label>
+
+                    <select>
+
+                        <option selected>Dragonfish</option>
+                        <option>zNube</option>
+                        <option>Lince</option>
+                        <option>Pantera</option>
+
+                    </select>
+
+                </div>
+
+                <div>
+
+                    <label>Estado</label>
+
+                    <select>
+
+                        <option selected>Todos</option>
+                        <option>Vigentes</option>
+                        <option>Pendientes de revisión</option>
+                        <option>Archivados</option>
+
+                    </select>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- RESUMEN -->
+
+        <div class="grid-4">
+
+            <div class="stat">
+
+                <div class="stat-number">
+                    {{ documentos|length if documentos else 0 }}
+                </div>
+
+                <div class="stat-label">
+                    Documentos
+                </div>
+
+            </div>
+
+
+            <div class="stat">
+
+                <div class="stat-number">
+                    {{ documentos|selectattr("estado", "equalto", "Vigente")|list|length if documentos else 0 }}
+                </div>
+
+                <div class="stat-label">
+                    Vigentes
+                </div>
+
+            </div>
+
+
+            <div class="stat">
+
+                <div class="stat-number">
+                    {{ documentos|selectattr("estado", "equalto", "Pendiente de revisión")|list|length if documentos else 0 }}
+                </div>
+
+                <div class="stat-label">
+                    Pendientes de revisión
+                </div>
+
+            </div>
+
+
+            <div class="stat">
+
+                <div class="stat-number">
+                    {{ documentos|selectattr("estado", "equalto", "Archivado")|list|length if documentos else 0 }}
+                </div>
+
+                <div class="stat-label">
+                    Archivados
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- CATEGORÍAS -->
+
+        <div class="card">
+
+            <h2>Categorías</h2>
+
+            <p class="muted">
+                Organización de la documentación de Dragonfish, zNube, Lince y Pantera.
+            </p>
+
+
+            <div class="grid-3">
+
+                <div class="stat">
+                    <div class="stat-number">
+                        {{ documentos|selectattr("categoria", "equalto", "Facturación Electrónica")|list|length if documentos else 0 }}
+                    </div>
+                    <div class="stat-label">
+                        Facturación Electrónica
+                    </div>
+                </div>
+
+
+                <div class="stat">
+                    <div class="stat-number">
+                        {{ documentos|selectattr("categoria", "equalto", "Mantenimiento")|list|length if documentos else 0 }}
+                    </div>
+                    <div class="stat-label">
+                        Mantenimiento
+                    </div>
+                </div>
+
+
+                <div class="stat">
+                    <div class="stat-number">
+                        {{ documentos|selectattr("categoria", "equalto", "Base de Datos")|list|length if documentos else 0 }}
+                    </div>
+                    <div class="stat-label">
+                        Base de Datos
+                    </div>
+                </div>
+
+
+                <div class="stat">
+                    <div class="stat-number">
+                        {{ documentos|selectattr("categoria", "equalto", "Configuración")|list|length if documentos else 0 }}
+                    </div>
+                    <div class="stat-label">
+                        Configuración
+                    </div>
+                </div>
+
+
+                <div class="stat">
+                    <div class="stat-number">
+                        {{ documentos|selectattr("categoria", "equalto", "Ecommerce")|list|length if documentos else 0 }}
+                    </div>
+                    <div class="stat-label">
+                        Ecommerce
+                    </div>
+                </div>
+
+
+                <div class="stat">
+                    <div class="stat-number">
+                        {{ documentos|selectattr("categoria", "equalto", "Otros")|list|length if documentos else 0 }}
+                    </div>
+                    <div class="stat-label">
+                        Otros
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- FORMULARIO DE CARGA -->
+
+        <div class="card"
+             id="uploadForm"
+             style="display:none;">
+
+            <h2>Agregar documento</h2>
+
+            <p class="muted">
+                Incorporá uno o varios documentos PDF a la Knowledge Base.
+            </p>
+
+            <form action="/knowledge/upload"
+                  method="POST"
+                  enctype="multipart/form-data">
+
+                <div class="grid">
+
+                    <div>
+
+                        <label>Archivos PDF</label>
+
+                        <input type="file"
+                               name="archivo"
+                               accept=".pdf"
+                               multiple
+                               required>
+
+                        <p class="muted" style="margin:6px 0 0 0;">
+                            Podés seleccionar varios PDFs a la vez. Todos
+                            se cargan con los mismos datos de abajo y cada
+                            uno toma el nombre de su archivo.
+                        </p>
+
+                    </div>
+
+
+                    <div>
+
+                        <label>Nombre del documento</label>
+
+                        <input type="text"
+                               name="nombre_documento"
+                               placeholder="Ej. Procedimiento error de CAE">
+
+                    </div>
+
+
+                    <div>
+
+                        <label>Producto</label>
+
+                        <select name="producto">
+
+                            <option selected>Dragonfish</option>
+                            <option>zNube</option>
+                            <option>Lince</option>
+                            <option>Pantera</option>
+
+                        </select>
+
+                    </div>
+
+
+                    <div>
+
+                        <label>Categoría</label>
+
+                        <select name="categoria">
+
+                            <option selected>Seleccionar categoría</option>
+                            <option>Facturación Electrónica</option>
+                            <option>Mantenimiento</option>
+                            <option>Base de Datos</option>
+                            <option>Configuración</option>
+                            <option>Ecommerce</option>
+                            <option>Otros</option>
+
+                        </select>
+
+                    </div>
+
+
+                    <div>
+
+                        <label>Subcategoría</label>
+
+                        <input type="text"
+                               name="subcategoria"
+                               placeholder="Ej. CAE / Certificados / ARCA">
+
+                    </div>
+
+
+                    <div>
+
+                        <label>Nivel de soporte</label>
+
+                        <select name="nivel">
+
+                            <option selected>L1</option>
+                            <option>L2</option>
+                            <option>L3</option>
+                            <option>Todos</option>
+
+                        </select>
+
+                    </div>
+
+
+                    <div>
+
+                        <label>Estado</label>
+
+                        <select name="estado">
+
+                            <option selected>Vigente</option>
+                            <option>Pendiente de revisión</option>
+                            <option>Archivado</option>
+
+                        </select>
+
+                    </div>
+
+
+                    <div>
+
+                        <label>Fuente</label>
+
+                        <select name="fuente">
+
+                            <option selected>Procedimiento oficial</option>
+                            <option>Manual</option>
+                            <option>Documento interno</option>
+                            <option>Otro</option>
+
+                        </select>
+
+                    </div>
+
+                </div>
+
+
+                <div style="margin-top:20px;">
+
+                    <label>
+                        Descripción / alcance del documento
+                    </label>
+
+                    <textarea
+                        name="descripcion"
+                        placeholder="Describí brevemente qué problema o procedimiento cubre este documento."></textarea>
+
+                </div>
+
+
+                <div class="buttons">
+
+                    <button type="button"
+                            class="secondary"
+                            onclick="document.getElementById('uploadForm').style.display='none'">
+                        Cancelar
+                    </button>
+
+                    <button type="submit"
+                            class="primary">
+                        Incorporar documento
+                    </button>
+
+                </div>
+
+            </form>
+
+        </div>
+
+
+        <!-- GUARDADO Y COPIA DE SEGURIDAD -->
+
+        <div class="card">
+
+            <h2>Guardado de los PDFs</h2>
+
+            {% if kb_persistente %}
+            <p class="muted">
+                <span class="tag green">✔ Guardado permanente</span>
+                Los PDFs y lo procesado quedan guardados en un disco
+                persistente: no hace falta volver a subirlos después de
+                un reinicio o de un deploy.
+            </p>
+            {% else %}
+            <p class="muted">
+                <span class="tag yellow">⚠ Guardado temporal</span>
+                Esta instalación guarda los PDFs en un disco que se
+                borra en cada deploy o reinicio. Para que queden
+                permanentes hay que conectar un Persistent Disk en
+                Render (ver render.yaml). Mientras tanto, descargá una
+                copia de seguridad y restaurala cuando haga falta.
+            </p>
+            {% endif %}
+
+            <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-top:10px;">
+
+                <a class="button secondary" href="/knowledge/backup">
+                    ⬇ Descargar copia de seguridad (ZIP)
+                </a>
+
+                <form method="POST"
+                      action="/knowledge/restore"
+                      enctype="multipart/form-data"
+                      style="display:flex; gap:8px; align-items:center;">
+
+                    <input type="file" name="backup" accept=".zip" required>
+
+                    <button class="button secondary" type="submit">
+                        Restaurar copia
+                    </button>
+
+                </form>
+
+            </div>
+
+        </div>
+
+
+        <!-- DOCUMENTOS -->
+
+        <div class="card">
+
+            <h2>Documentos</h2>
+
+            <p class="muted">
+                Documentación disponible en la Knowledge Base seleccionada.
+            </p>
+
+
+            <div style="overflow-x:auto;">
+
+                <table class="routing-table">
+
+                    <thead>
+
+                        <tr>
+
+                            <th>Documento</th>
+                            <th>Producto</th>
+                            <th>Categoría</th>
+                            <th>Nivel</th>
+                            <th>Estado</th>
+                            <th>Acciones</th>
+
+                        </tr>
+
+                    </thead>
+
+
+                    <tbody>
+
+                        {% if documentos %}
+
+                            {% for documento in documentos %}
+
+                            <tr>
+
+                                <td>
+                                    📄 {{ documento.nombre or documento.archivo }}
+
+                                    {% if documento.procesamiento == "PROCESANDO" %}
+                                        <br><span class="tag yellow">⏳ Procesando…</span>
+                                    {% elif documento.procesamiento == "ERROR" %}
+                                        <br><span class="tag gray">⚠ Error al procesar</span>
+                                        <br><small>{{ documento.error }}</small>
+                                    {% else %}
+                                        <br><small>{{ documento.cantidad_imagenes or 0 }} imágenes analizadas{% if documento.paginas_escaneadas %} · {{ documento.paginas_escaneadas }} pág. escaneadas{% endif %}</small>
+                                        {% if documento.simulado %}
+                                            <br><span class="tag yellow">🧪 Procesado en simulación</span>
+                                        {% endif %}
+                                        {% if documento.advertencia or documento.imagenes_con_error %}
+                                            <br><span class="tag yellow">⚠ Imágenes sin analizar</span>
+                                            {% if documento.advertencia %}<br><small>{{ documento.advertencia }}</small>{% endif %}
+                                        {% endif %}
+                                    {% endif %}
+                                </td>
+
+                                <td>
+                                    {{ documento.producto }}
+                                </td>
+
+                                <td>
+                                    {{ documento.categoria }}
+
+                                    {% if documento.subcategoria %}
+                                        <br>
+                                        <small>{{ documento.subcategoria }}</small>
+                                    {% endif %}
+
+                                </td>
+
+                                <td>
+                                    {{ documento.nivel }}
+                                </td>
+
+                                <td>
+
+                                    {% if documento.estado == "Vigente" %}
+
+                                        <span class="tag green">
+                                            Vigente
+                                        </span>
+
+                                    {% elif documento.estado == "Pendiente de revisión" %}
+
+                                        <span class="tag yellow">
+                                            Pendiente
+                                        </span>
+
+                                    {% else %}
+
+                                        <span class="tag">
+                                            Archivado
+                                        </span>
+
+                                    {% endif %}
+
+                                </td>
+
+                                <td>
+
+                                    <div style="display:flex; gap:7px; flex-wrap:wrap;">
+
+                                        <button
+                                            class="secondary"
+                                            type="button"
+                                            {% if documento.procesamiento != "PROCESADO" %}disabled{% endif %}
+                                            onclick='verDocumento(
+                                                {{ documento.contenido_completo|tojson }},
+                                                {{ (documento.nombre or documento.archivo)|tojson }}
+                                            )'>
+                                            👁 Ver contenido
+                                        </button>
+
+                                        {% if documento.procesamiento == "ERROR" or documento.advertencia or documento.imagenes_con_error or (documento.simulado and not simulado) %}
+                                        <form action="/knowledge/reprocesar/{{ documento.id }}"
+                                              method="POST"
+                                              style="margin:0;">
+                                            <button class="secondary" type="submit">
+                                                🔄 Reprocesar
+                                            </button>
+                                        </form>
+                                        {% endif %}
+
+                                        <button
+                                            class="secondary"
+                                            type="button"
+                                            onclick='verInfoDocumento(
+                                                {{ documento.nombre|tojson }},
+                                                {{ documento.archivo|tojson }},
+                                                {{ documento.producto|tojson }},
+                                                {{ documento.categoria|tojson }},
+                                                {{ documento.subcategoria|tojson }},
+                                                {{ documento.nivel|tojson }},
+                                                {{ documento.estado|tojson }},
+                                                {{ documento.fuente|tojson }},
+                                                {{ documento.descripcion|tojson }}
+                                            )'>
+                                            Ver
+                                        </button>
+
+                                    </div>
+
+                                </td>
+
+                            </tr>
+
+                            {% endfor %}
+
+
+                        {% else %}
+
+                            <tr>
+
+                                <td colspan="6"
+                                    style="text-align:center; padding:30px; color:#6b7280;">
+
+                                    Todavía no hay documentos cargados.
+
+                                </td>
+
+                            </tr>
+
+                        {% endif %}
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+
+        <!-- MODAL CONTENIDO PDF -->
+
+        <div id="contenidoModal"
+             class="modal"
+             onclick="cerrarModalContenido(event)">
+
+            <div class="modal-content"
+                 onclick="event.stopPropagation()">
+
+                <div class="modal-header">
+
+                    <h2 id="contenidoTitulo">
+                        Contenido del documento
+                    </h2>
+
+                    <button class="modal-close"
+                            type="button"
+                            onclick="cerrarContenido()">
+                        ×
+                    </button>
+
+                </div>
+
+                <div class="modal-body">
+
+                    <div id="contenidoTexto"
+                         class="pdf-text">
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- MODAL INFORMACIÓN -->
+
+        <div id="infoModal"
+             class="modal"
+             onclick="cerrarModalInfo(event)">
+
+            <div class="modal-content"
+                 onclick="event.stopPropagation()">
+
+                <div class="modal-header">
+
+                    <h2 id="infoTitulo">
+                        Información del documento
+                    </h2>
+
+                    <button class="modal-close"
+                            type="button"
+                            onclick="cerrarInfo()">
+                        ×
+                    </button>
+
+                </div>
+
+                <div class="modal-body">
+
+                    <div class="card">
+
+                        <p>
+                            <strong>Archivo:</strong>
+                            <span id="infoArchivo"></span>
+                        </p>
+
+                        <p>
+                            <strong>Producto:</strong>
+                            <span id="infoProducto"></span>
+                        </p>
+
+                        <p>
+                            <strong>Categoría:</strong>
+                            <span id="infoCategoria"></span>
+                        </p>
+
+                        <p>
+                            <strong>Subcategoría:</strong>
+                            <span id="infoSubcategoria"></span>
+                        </p>
+
+                        <p>
+                            <strong>Nivel:</strong>
+                            <span id="infoNivel"></span>
+                        </p>
+
+                        <p>
+                            <strong>Estado:</strong>
+                            <span id="infoEstado"></span>
+                        </p>
+
+                        <p>
+                            <strong>Fuente:</strong>
+                            <span id="infoFuente"></span>
+                        </p>
+
+                        <p>
+                            <strong>Descripción:</strong>
+                        </p>
+
+                        <p class="muted"
+                           id="infoDescripcion">
+                        </p>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- ============================= -->
+        <!-- CONEXIONES -->
+        <!-- ============================= -->
+
+        {% elif section == "conexiones" %}
+
+        <div class="card">
+
+            <h2>Conexiones</h2>
+
+            <p class="muted">
+                Integraciones con WhatsApp, APIs, tickets y otros sistemas.
+            </p>
+
+        </div>
+
+
+        <!-- ============================= -->
+        <!-- MÉTRICAS -->
+        <!-- ============================= -->
+
+        {% elif section == "metricas" %}
+
+        <div class="card">
+
+            <h2>Métricas</h2>
+
+            <p class="muted">
+                Métricas de conversaciones, resolución, derivaciones
+                y rendimiento de los agentes.
+            </p>
+
+            <div class="buttons" style="margin-top:12px;">
+                <a href="/metricas?canal=todos"
+                   class="button {{ 'primary' if canal == 'todos' else 'secondary' }}">Todos los canales</a>
+                <a href="/metricas?canal=playground"
+                   class="button {{ 'primary' if canal == 'playground' else 'secondary' }}">Playground (pruebas)</a>
+                <a href="/metricas?canal=simulado"
+                   class="button {{ 'primary' if canal == 'simulado' else 'secondary' }}">Simulación</a>
+                <a href="/metricas?canal=whatsapp"
+                   class="button {{ 'primary' if canal == 'whatsapp' else 'secondary' }}">WhatsApp</a>
+            </div>
+
+        </div>
+
+
+        <div class="grid-3" style="margin-bottom:20px;">
+
+            <div class="stat">
+                <div class="stat-number">{{ m.total }}</div>
+                <div class="stat-label">Consultas totales</div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-number">{{ m.resueltas }}</div>
+                <div class="stat-label">Resueltas por IA</div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-number">{{ m.derivadas }}</div>
+                <div class="stat-label">Derivadas</div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-number">{{ m.porcentaje_resolucion }}%</div>
+                <div class="stat-label">% de resolución por IA (sobre el total)</div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-number">{{ m.tiempo_promedio }}</div>
+                <div class="stat-label">Tiempo promedio (conversaciones cerradas)</div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-number">{{ m.en_curso }}</div>
+                <div class="stat-label">En curso / sin cerrar</div>
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <h3>Consultas por producto</h3>
+
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead>
+                        <tr>
+                            <th>Producto</th>
+                            <th>Consultas</th>
+                            <th>Resueltas por IA</th>
+                            <th>Derivadas</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for f in m.por_producto %}
+                        <tr>
+                            <td>{{ f.producto }}</td>
+                            <td>{{ f.total }}</td>
+                            <td>{{ f.resueltas }}</td>
+                            <td>{{ f.derivadas }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="4" class="muted">Todavía no hay conversaciones.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <h3>Consultas por categoría</h3>
+
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead>
+                        <tr>
+                            <th>Categoría</th>
+                            <th>Consultas</th>
+                            <th>Resueltas por IA</th>
+                            <th>Derivadas</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for f in m.por_categoria %}
+                        <tr>
+                            <td>{{ f.categoria }}</td>
+                            <td>{{ f.total }}</td>
+                            <td>{{ f.resueltas }}</td>
+                            <td>{{ f.derivadas }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="4" class="muted">Todavía no hay conversaciones.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <h3>Derivaciones y motivos</h3>
+
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead>
+                        <tr>
+                            <th>Destino</th>
+                            <th>Motivo</th>
+                            <th>Cantidad</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for f in m.motivos_derivacion %}
+                        <tr>
+                            <td>{{ f.destino or '-' }}</td>
+                            <td>{{ f.motivo or '-' }}</td>
+                            <td>{{ f.cantidad }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="3" class="muted">Todavía no hay derivaciones.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+
+
+        <div class="grid">
+
+            <div class="card">
+
+                <h3>Documentos más consultados</h3>
+
+                <div style="overflow-x:auto;">
+                    <table class="routing-table">
+                        <thead>
+                            <tr>
+                                <th>Documento</th>
+                                <th>Consultas</th>
+                                <th>Conversaciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for f in m.docs_consultados %}
+                            <tr>
+                                <td>{{ f.documento }}</td>
+                                <td>{{ f.consultas }}</td>
+                                <td>{{ f.conversaciones }}</td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="3" class="muted">Sin datos todavía.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+            </div>
+
+            <div class="card">
+
+                <h3>Soluciones más utilizadas</h3>
+
+                <p class="muted">
+                    Documentos con los que se resolvieron casos.
+                </p>
+
+                <div style="overflow-x:auto;">
+                    <table class="routing-table">
+                        <thead>
+                            <tr>
+                                <th>Documento</th>
+                                <th>Casos resueltos</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for f in m.soluciones %}
+                            <tr>
+                                <td>{{ f.documento }}</td>
+                                <td>{{ f.casos }}</td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="2" class="muted">Sin datos todavía.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <h3>Consultas sin documentación</h3>
+
+            <p class="muted">
+                Casos derivados a MDA o donde el agente nunca encontró un
+                documento útil. Indican qué falta cargar en la Knowledge Base.
+            </p>
+
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead>
+                        <tr>
+                            <th>Categoría</th>
+                            <th>Consulta del cliente</th>
+                            <th>Destino</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for f in m.sin_documentacion %}
+                        <tr>
+                            <td>{{ f.categoria or 'Sin clasificar' }}{% if f.subcategoria %}<br><small>{{ f.subcategoria }}</small>{% endif %}</td>
+                            <td>{{ f.problema }}</td>
+                            <td>{{ f.destino or '-' }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="3" class="muted">Sin casos.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <h3>Casos donde L1 no pudo resolver</h3>
+
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead>
+                        <tr>
+                            <th>Categoría</th>
+                            <th>Consulta del cliente</th>
+                            <th>Intentos</th>
+                            <th>Destino</th>
+                            <th>Motivo</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for f in m.no_resolvio %}
+                        <tr>
+                            <td>{{ f.categoria or 'Sin clasificar' }}{% if f.subcategoria %}<br><small>{{ f.subcategoria }}</small>{% endif %}</td>
+                            <td>{{ f.problema }}</td>
+                            <td>{{ f.intentos }}</td>
+                            <td>{{ f.destino or '-' }}</td>
+                            <td>{{ f.motivo or '-' }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="5" class="muted">Sin casos.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <h3>Últimas conversaciones</h3>
+
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Canal</th>
+                            <th>Producto</th>
+                            <th>Categoría</th>
+                            <th>Consulta</th>
+                            <th>Estado</th>
+                            <th>Mensajes</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for c in m.conversaciones %}
+                        <tr>
+                            <td>{{ c.fecha }}</td>
+                            <td>{{ c.canal }}</td>
+                            <td>{{ c.producto }}</td>
+                            <td>{{ c.categoria }}{% if c.subcategoria %}<br><small>{{ c.subcategoria }}</small>{% endif %}</td>
+                            <td>{{ c.problema or '-' }}</td>
+                            <td>
+                                {% if c.estado == "Resuelta por IA" %}
+                                    <span class="tag green">Resuelta por IA</span>
+                                {% elif c.estado == "Derivada" %}
+                                    <span class="tag yellow">Derivada{% if c.destino %} a {{ c.destino }}{% endif %}</span>
+                                {% else %}
+                                    <span class="tag gray">En curso</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ c.mensajes }}</td>
+                            <td>
+                                <button class="secondary"
+                                        type="button"
+                                        onclick='verDocumento(
+                                            {{ c.transcripcion|tojson }},
+                                            {{ ("Conversación " ~ c.fecha)|tojson }}
+                                        )'>
+                                    👁 Ver conversación
+                                </button>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="8" class="muted">Todavía no hay conversaciones guardadas.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+
+
+        <!-- MODAL CONVERSACIÓN (reutiliza el visor de contenido) -->
+
+        <div id="contenidoModal"
+             class="modal"
+             onclick="cerrarModalContenido(event)">
+
+            <div class="modal-content"
+                 onclick="event.stopPropagation()">
+
+                <div class="modal-header">
+
+                    <h2 id="contenidoTitulo">
+                        Conversación
+                    </h2>
+
+                    <button class="modal-close"
+                            type="button"
+                            onclick="cerrarContenido()">
+                        ×
+                    </button>
+
+                </div>
+
+                <div class="modal-body">
+
+                    <div id="contenidoTexto"
+                         class="pdf-text">
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- ============================= -->
+        <!-- PLAYGROUND -->
+        <!-- ============================= -->
+
+        {% elif section == "playground" %}
+
+        <div class="card">
+
+            <h2>Playground</h2>
+
+            <p class="muted">
+                Probá conversaciones con el
+                <strong>Agente Técnico L1</strong>
+                antes de conectarlo a WhatsApp. El agente clasifica,
+                pregunta y responde usando los documentos de la
+                Knowledge Base.
+            </p>
+
+            <div class="tags">
+                <span class="tag gray">Canal: simulado</span>
+                {% if simulado %}
+                <span class="tag yellow">🧪 Modo simulación: las respuestas son de ejemplo (reglas), no de IA real</span>
+                {% endif %}
+            </div>
+
+            <div style="margin-top:14px; max-width:260px;">
+                <label>Producto a probar</label>
+                <select id="pgProducto" onchange="pgCambiarProducto()">
+                    {% for p in productos %}
+                    <option value="{{ p }}">{{ p }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div style="margin-top:14px;">
+                <label style="display:flex; gap:8px; align-items:center; font-size:12px;">
+                    <input type="checkbox"
+                           id="pgPendientes"
+                           checked
+                           style="width:auto;">
+                    Incluir documentos "Pendiente de revisión"
+                    (solo para pruebas)
+                </label>
+            </div>
+
+        </div>
+
+
+        <div class="pg-layout">
+
+            <div class="card">
+
+                <h3>Conversación</h3>
+
+                <div class="tags" style="margin:0 0 12px 0;">
+                    <button type="button" class="pg-chip"
+                            onclick="pgEjemplo('No puedo obtener CAE cuando intento facturar.')">
+                        Ejemplo: CAE
+                    </button>
+                    <button type="button" class="pg-chip"
+                            onclick="pgEjemplo('No me están entrando los pedidos de Tienda Nube a Dragonfish.')">
+                        Ejemplo: Tienda Nube
+                    </button>
+                    <button type="button" class="pg-chip"
+                            onclick="pgEjemplo('¿Qué módulos necesito para integrar Tienda Nube?')">
+                        Ejemplo: consulta de información
+                    </button>
+                </div>
+
+                <div id="pgChat" class="pg-chat"></div>
+
+                <div class="pg-input">
+
+                    <textarea id="pgTexto"
+                              rows="1"
+                              placeholder="Escribí como si fueras el cliente..."></textarea>
+
+                    <button type="button"
+                            class="primary"
+                            id="pgEnviar"
+                            onclick="pgEnviar()">
+                        Enviar
+                    </button>
+
+                </div>
+
+                <div class="buttons" style="margin-top:12px;">
+                    <button type="button"
+                            class="secondary"
+                            onclick="pgReiniciar()">
+                        Nueva conversación
+                    </button>
+                </div>
+
+            </div>
+
+
+            <div>
+
+                <div class="card">
+
+                    <h3>Estado interno</h3>
+
+                    <div id="pgEstado"></div>
+
+                </div>
+
+                <div class="card" id="pgResumenCard" style="display:none;">
+
+                    <h3>Resumen técnico de derivación</h3>
+
+                    <div id="pgResumen"></div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <script>
+
+            function pgProducto() {
+                var sel = document.getElementById("pgProducto");
+                return sel ? sel.value : "Dragonfish";
+            }
+
+            var PG_SALUDO =
+                "Hola, soy el asistente técnico de " + pgProducto() + ". " +
+                "¿En qué te puedo ayudar?";
+
+            var pgHistorial = [];
+            var pgEstado = null;
+            var pgConversacionId = "";
+            var pgEnviando = false;
+
+
+            function pgAgregar(rol, texto) {
+
+                var caja = document.getElementById("pgChat");
+
+                var div = document.createElement("div");
+
+                div.className = "pg-msg " + rol;
+
+                div.textContent = texto;
+
+                caja.appendChild(div);
+
+                caja.scrollTop = caja.scrollHeight;
+
+                return div;
+            }
+
+
+            function pgFila(titulo, valor) {
+
+                var fila = document.createElement("div");
+
+                fila.className = "pg-row";
+
+                var t = document.createElement("strong");
+
+                t.textContent = titulo;
+
+                fila.appendChild(t);
+
+                if (Array.isArray(valor)) {
+
+                    if (valor.length === 0) {
+
+                        fila.appendChild(document.createTextNode("-"));
+
+                    } else {
+
+                        var ul = document.createElement("ul");
+
+                        valor.forEach(function(v) {
+
+                            var li = document.createElement("li");
+
+                            li.textContent = v;
+
+                            ul.appendChild(li);
+                        });
+
+                        fila.appendChild(ul);
+                    }
+
+                } else {
+
+                    fila.appendChild(
+                        document.createTextNode(valor || "-")
+                    );
+                }
+
+                return fila;
+            }
+
+
+            function pgPintarEstado(estado, fragmentos, avisos) {
+
+                var cont = document.getElementById("pgEstado");
+
+                cont.innerHTML = "";
+
+                if (!estado) {
+
+                    cont.appendChild(pgFila("Producto", pgProducto()));
+                    cont.appendChild(pgFila("Estado", "Esperando el primer mensaje"));
+
+                    return;
+                }
+
+                var d = estado.derivacion || {};
+
+                cont.appendChild(pgFila("Producto", estado.producto));
+                cont.appendChild(pgFila("Categoría", estado.categoria));
+                cont.appendChild(pgFila("Subcategoría", estado.subcategoria));
+                cont.appendChild(pgFila("Etapa", estado.etapa));
+                cont.appendChild(pgFila("Consulta del cliente", estado.problema_informado));
+                cont.appendChild(pgFila("Información recopilada", estado.informacion_recopilada));
+                cont.appendChild(pgFila("Información que falta", estado.informacion_faltante));
+                cont.appendChild(pgFila("Diagnóstico", estado.diagnostico));
+
+                cont.appendChild(pgFila(
+                    "Documentos consultados",
+                    (estado.documentos_consultados || []).map(function(x) {
+                        return x.documento + (x.pagina ? " (pág. " + x.pagina + ")" : "");
+                    })
+                ));
+
+                cont.appendChild(pgFila("Solución propuesta", estado.solucion_propuesta));
+                cont.appendChild(pgFila("Pasos realizados", estado.pasos_realizados));
+                cont.appendChild(pgFila("Validación", estado.validacion));
+                cont.appendChild(pgFila("Resultado", estado.resultado));
+                cont.appendChild(pgFila("Intentos de solución", String(estado.intentos_solucion || 0)));
+
+                cont.appendChild(pgFila(
+                    "Decisión de derivación",
+                    d.derivar ? ("Derivar a " + d.destino + " — " + d.motivo) : "No derivar (por ahora)"
+                ));
+
+                if (fragmentos) {
+
+                    cont.appendChild(pgFila(
+                        "Fragmentos de la KB recuperados en este turno",
+                        fragmentos.length === 0
+                            ? ["Ninguno"]
+                            : fragmentos.map(function(f) {
+                                return f.id + " · " + f.documento +
+                                    (f.pagina ? " (pág. " + f.pagina + ")" : "") +
+                                    " · puntaje " + f.puntaje;
+                            })
+                    ));
+                }
+
+                if (avisos && avisos.length) {
+
+                    cont.appendChild(pgFila("⚠ Avisos", avisos));
+                }
+            }
+
+
+            function pgPintarResumen(resumen) {
+
+                var card = document.getElementById("pgResumenCard");
+
+                var cont = document.getElementById("pgResumen");
+
+                cont.innerHTML = "";
+
+                if (!resumen) {
+
+                    card.style.display = "none";
+
+                    return;
+                }
+
+                card.style.display = "block";
+
+                cont.appendChild(pgFila("Producto", resumen.producto));
+                cont.appendChild(pgFila("Categoría", resumen.categoria));
+                cont.appendChild(pgFila("Subcategoría", resumen.subcategoria));
+                cont.appendChild(pgFila("Consulta del cliente", resumen.problema_informado));
+                cont.appendChild(pgFila("Información recopilada", resumen.informacion_recopilada));
+                cont.appendChild(pgFila("Diagnóstico", resumen.diagnostico));
+                cont.appendChild(pgFila("Procedimientos realizados", resumen.procedimientos_realizados));
+                cont.appendChild(pgFila("Resultado", resumen.resultado));
+                cont.appendChild(pgFila("Destino", resumen.destino));
+                cont.appendChild(pgFila("Motivo de derivación", resumen.motivo_derivacion));
+            }
+
+
+            function pgReiniciar() {
+
+                pgHistorial = [];
+                pgEstado = null;
+                pgConversacionId = "";
+
+                document.getElementById("pgChat").innerHTML = "";
+
+                pgAgregar("agente", PG_SALUDO);
+
+                pgPintarEstado(null);
+                pgPintarResumen(null);
+
+                document.getElementById("pgTexto").value = "";
+            }
+
+
+            // Al cambiar de producto se empieza una conversación nueva
+            function pgCambiarProducto() {
+
+                PG_SALUDO =
+                    "Hola, soy el asistente técnico de " + pgProducto() + ". " +
+                    "¿En qué te puedo ayudar?";
+
+                pgReiniciar();
+            }
+
+
+            function pgEjemplo(texto) {
+
+                document.getElementById("pgTexto").value = texto;
+
+                document.getElementById("pgTexto").focus();
+            }
+
+
+            async function pgEnviar() {
+
+                if (pgEnviando) {
+                    return;
+                }
+
+                var campo = document.getElementById("pgTexto");
+
+                var texto = campo.value.trim();
+
+                if (!texto) {
+                    return;
+                }
+
+                pgEnviando = true;
+
+                document.getElementById("pgEnviar").disabled = true;
+
+                campo.value = "";
+
+                pgAgregar("cliente", texto);
+
+                var pensando = pgAgregar("agente", "Escribiendo…");
+
+                // El saludo inicial es solo visual: se envía el historial real
+                var historialEnviado = pgHistorial.slice();
+
+                try {
+
+                    var respuesta = await fetch("/playground/chat", {
+
+                        method: "POST",
+
+                        headers: {"Content-Type": "application/json"},
+
+                        body: JSON.stringify({
+                            mensaje: texto,
+                            historial: [{rol: "agente", texto: PG_SALUDO}].concat(historialEnviado),
+                            estado: pgEstado,
+                            conversacion_id: pgConversacionId,
+                            producto: pgProducto(),
+                            incluir_pendientes: document.getElementById("pgPendientes").checked
+                        })
+                    });
+
+                    var datos = await respuesta.json();
+
+                    pensando.remove();
+
+                    if (!respuesta.ok) {
+
+                        pgAgregar("sistema", datos.error || "Error inesperado.");
+
+                    } else {
+
+                        pgAgregar("agente", datos.respuesta);
+
+                        pgHistorial.push({rol: "cliente", texto: texto});
+                        pgHistorial.push({rol: "agente", texto: datos.respuesta});
+
+                        pgEstado = datos.estado;
+                        pgConversacionId = datos.conversacion_id || pgConversacionId;
+
+                        pgPintarEstado(datos.estado, datos.fragmentos, datos.avisos);
+                        pgPintarResumen(datos.resumen_tecnico);
+                    }
+
+                } catch (e) {
+
+                    pensando.remove();
+
+                    pgAgregar("sistema", "No se pudo conectar con el servidor.");
+                }
+
+                pgEnviando = false;
+
+                document.getElementById("pgEnviar").disabled = false;
+
+                campo.focus();
+            }
+
+
+            document.getElementById("pgTexto").addEventListener("keydown", function(e) {
+
+                if (e.key === "Enter" && !e.shiftKey) {
+
+                    e.preventDefault();
+
+                    pgEnviar();
+                }
+            });
+
+
+            pgReiniciar();
+
+        </script>
+
+        {% endif %}
+
+    </div>
+
+</main>
+
+</div>
+
+<script>
+
+    /* ============================================================
+       VER CONTENIDO DEL PDF
+       ============================================================ */
+
+    function verDocumento(texto, nombre) {
+
+        document.getElementById("contenidoTitulo").textContent =
+            "Contenido: " + nombre;
+
+        document.getElementById("contenidoTexto").textContent =
+            texto || "No se encontró texto extraído en este documento.";
+
+        document.getElementById("contenidoModal").style.display = "block";
+    }
+
+
+    function cerrarContenido() {
+
+        var el = document.getElementById("contenidoModal");
+
+        if (el) {
+            el.style.display = "none";
+        }
+    }
+
+
+    function cerrarModalContenido(event) {
+
+        if (event.target === document.getElementById("contenidoModal")) {
+            cerrarContenido();
+        }
+
+    }
+
+
+    /* ============================================================
+       VER INFORMACIÓN DEL DOCUMENTO
+       ============================================================ */
+
+    function verInfoDocumento(
+        nombre,
+        archivo,
+        producto,
+        categoria,
+        subcategoria,
+        nivel,
+        estado,
+        fuente,
+        descripcion
+    ) {
+
+        document.getElementById("infoTitulo").textContent =
+            "Documento: " + (nombre || archivo);
+
+        document.getElementById("infoArchivo").textContent =
+            archivo || "-";
+
+        document.getElementById("infoProducto").textContent =
+            producto || "-";
+
+        document.getElementById("infoCategoria").textContent =
+            categoria || "-";
+
+        document.getElementById("infoSubcategoria").textContent =
+            subcategoria || "-";
+
+        document.getElementById("infoNivel").textContent =
+            nivel || "-";
+
+        document.getElementById("infoEstado").textContent =
+            estado || "-";
+
+        document.getElementById("infoFuente").textContent =
+            fuente || "-";
+
+        document.getElementById("infoDescripcion").textContent =
+            descripcion || "Sin descripción.";
+
+        document.getElementById("infoModal").style.display = "block";
+    }
+
+
+    function cerrarInfo() {
+
+        var el = document.getElementById("infoModal");
+
+        if (el) {
+            el.style.display = "none";
+        }
+    }
+
+
+    function cerrarModalInfo(event) {
+
+        if (event.target === document.getElementById("infoModal")) {
+            cerrarInfo();
+        }
+
+    }
+
+
+    /* ============================================================
+       ESC PARA CERRAR MODALES
+       ============================================================ */
+
+    document.addEventListener("keydown", function(event) {
+
+        if (event.key === "Escape") {
+
+            cerrarContenido();
+            cerrarInfo();
+
+        }
+
+    });
+
+</script>
+
+</body>
+</html>

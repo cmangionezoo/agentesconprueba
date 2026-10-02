@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: zoo-logic-ai-agents
+    runtime: python
+
+    # El Persistent Disk requiere un plan pago (starter o superior).
+    # Sin disco, los PDFs y las conversaciones se borran en cada deploy.
+    plan: starter
+
+    buildCommand: pip install -r requirements.txt
+
+    # 1 solo worker (los PDFs se procesan en segundo plano dentro del mismo
+    # proceso) y varios hilos para atender varios mensajes de WhatsApp a la vez.
+    startCommand: gunicorn app:app --workers 1 --threads 8 --timeout 120
+
+    # Disco persistente: acá quedan guardados los PDFs, lo procesado y
+    # la base de conversaciones/métricas.
+    disk:
+      name: kb-data
+      mountPath: /var/data
+      sizeGB: 5
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.5
+      - key: KNOWLEDGE_DIR
+        value: /var/data/knowledge
+      # Se cargan a mano en el panel de Render (no van en el código):
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: UCONTACT_API_KEY
+        sync: false
+      - key: UCONTACT_COLAS
+        sync: false
+      - key: FLASK_SECRET_KEY
+        generateValue: true
