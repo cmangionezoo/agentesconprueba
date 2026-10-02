@@ -908,8 +908,13 @@ CAMPOS_TIPIFICABLES = (
 )
 
 
+def _ya_revisado(doc):
+    return bool((doc.get("tipificacion") or {}).get("revisada"))
+
+
 def tipificar_documento(
-    doc_id, campos=None, sobrescribir=False, forzar_pendiente=False
+    doc_id, campos=None, sobrescribir=False, forzar_pendiente=False,
+    respetar_revision=False
 ):
     """
     Completa con IA los datos del documento. Por defecto solo rellena lo que
@@ -932,6 +937,11 @@ def tipificar_documento(
     if doc.get("procesamiento") != "PROCESADO":
         return "El documento todavía no terminó de procesarse."
 
+    # Tipificación automática: si una persona ya revisó o editó este
+    # documento, la IA no lo toca.
+    if respetar_revision and _ya_revisado(doc):
+        return ""
+
     try:
 
         resultado = tipificador_service.tipificar(
@@ -946,12 +956,26 @@ def tipificar_documento(
 
     except ErrorTipificacion as e:
 
-        actualizar_documento(doc_id, {
-            "tipificacion": {
-                "origen": "IA", "error": str(e), "revisada": False,
-                "fecha": _ahora_iso()
-            }
-        })
+        with LOCK:
+
+            documentos = cargar_documentos()
+
+            for d in documentos:
+
+                if d.get("id") != doc_id:
+                    continue
+
+                if respetar_revision and _ya_revisado(d):
+                    return ""
+
+                d["tipificacion"] = {
+                    "origen": "IA", "error": str(e), "revisada": False,
+                    "fecha": _ahora_iso()
+                }
+
+                guardar_documentos(documentos)
+
+                break
 
         return str(e)
 
@@ -987,7 +1011,25 @@ def tipificar_documento(
         "fecha": _ahora_iso(),
     }
 
-    actualizar_documento(doc_id, cambios)
+    # La consulta a la IA tarda: mientras tanto alguien pudo editar el
+    # documento. Se vuelve a mirar justo antes de guardar.
+    with LOCK:
+
+        documentos = cargar_documentos()
+
+        for d in documentos:
+
+            if d.get("id") != doc_id:
+                continue
+
+            if respetar_revision and _ya_revisado(d):
+                return ""
+
+            d.update(cambios)
+
+            guardar_documentos(documentos)
+
+            break
 
     return ""
 
@@ -1000,7 +1042,7 @@ def procesar_y_tipificar(doc_id, ruta_pdf, tipificar=None):
     if tipificar:
 
         try:
-            tipificar_documento(doc_id, **tipificar)
+            tipificar_documento(doc_id, respetar_revision=True, **tipificar)
         except Exception as e:
             print(f"[{doc_id}] Error tipificando: {e}")
 
