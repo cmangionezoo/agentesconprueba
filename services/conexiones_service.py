@@ -40,6 +40,7 @@ def init_tablas():
             producto TEXT NOT NULL DEFAULT 'auto',
             auto INTEGER NOT NULL DEFAULT 1,
             tipificar_ia INTEGER NOT NULL DEFAULT 1,
+            auto_vigente INTEGER NOT NULL DEFAULT 1,
             activa INTEGER NOT NULL DEFAULT 1,
             secreto_cifrado TEXT NOT NULL DEFAULT '',
             creada TEXT NOT NULL,
@@ -59,6 +60,15 @@ def init_tablas():
             PRIMARY KEY (conexion_id, remoto_id)
         );
         """)
+
+        # Bases creadas antes de existir la opción "Vigente automático"
+        columnas = [f["name"] for f in db.execute("PRAGMA table_info(conexiones)")]
+
+        if "auto_vigente" not in columnas:
+            db.execute(
+                "ALTER TABLE conexiones "
+                "ADD COLUMN auto_vigente INTEGER NOT NULL DEFAULT 1"
+            )
 
         # Si el servidor se reinició a mitad de una sincronización
         db.execute("UPDATE conexiones SET sincronizando = 0")
@@ -110,17 +120,19 @@ def obtener_secreto(conexion_id):
     return crypto_service.descifrar(fila["secreto_cifrado"])
 
 
-def crear(tipo, nombre, url, producto, auto, tipificar_ia, secreto):
+def crear(tipo, nombre, url, producto, auto, tipificar_ia, secreto,
+          auto_vigente=True):
 
     with _LOCK, _conectar() as db:
 
         cursor = db.execute(
             "INSERT INTO conexiones (tipo, nombre, url, producto, auto, "
-            "tipificar_ia, activa, secreto_cifrado, creada) "
-            "VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            "tipificar_ia, auto_vigente, activa, secreto_cifrado, creada) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
             (
                 tipo, nombre, url, producto,
                 1 if auto else 0, 1 if tipificar_ia else 0,
+                1 if auto_vigente else 0,
                 crypto_service.cifrar(secreto), _ahora()
             )
         )
@@ -129,17 +141,18 @@ def crear(tipo, nombre, url, producto, auto, tipificar_ia, secreto):
 
 
 def actualizar(conexion_id, nombre, url, producto, auto, tipificar_ia,
-               secreto=None):
+               secreto=None, auto_vigente=True):
     """Si `secreto` es None se conservan las credenciales actuales."""
 
     with _LOCK, _conectar() as db:
 
         db.execute(
             "UPDATE conexiones SET nombre = ?, url = ?, producto = ?, "
-            "auto = ?, tipificar_ia = ? WHERE id = ?",
+            "auto = ?, tipificar_ia = ?, auto_vigente = ? WHERE id = ?",
             (
                 nombre, url, producto,
-                1 if auto else 0, 1 if tipificar_ia else 0, conexion_id
+                1 if auto else 0, 1 if tipificar_ia else 0,
+                1 if auto_vigente else 0, conexion_id
             )
         )
 
