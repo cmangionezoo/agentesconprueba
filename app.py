@@ -9,11 +9,15 @@ import zipfile
 import uuid
 import base64
 import threading
+import time
+import secrets
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from flask import (
     send_file,
+    session,
+    g,
     Flask,
     render_template,
     request,
@@ -31,7 +35,9 @@ import fitz
 
 from openai import OpenAI, AzureOpenAI
 
-from services import agent_service, conversation_service, ucontact_service
+from services import (
+    agent_service, conversation_service, ucontact_service, usuarios_service
+)
 from services.mock_client import MockClient
 
 
@@ -45,9 +51,23 @@ APP_VERSION = "agente-v6-ucontact"
 
 app = Flask(__name__)
 
-app.secret_key = os.environ.get(
-    "FLASK_SECRET_KEY",
-    "zoo-logic-ai-agents"
+# La clave firma las sesiones de login: tiene que ser secreta. Si no está
+# definida en Render, se genera una al azar (los logins se pierden en cada
+# reinicio, pero nadie puede falsificar una sesión).
+_SECRET = os.environ.get("FLASK_SECRET_KEY", "").strip()
+
+if not _SECRET or _SECRET == "zoo-logic-ai-agents":
+    print("AVISO: definí FLASK_SECRET_KEY en Render para que el login persista.")
+    _SECRET = secrets.token_hex(32)
+
+app.secret_key = _SECRET
+
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    # En Render (https) la cookie viaja solo por conexión segura
+    SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER")),
+    PERMANENT_SESSION_LIFETIME=12 * 60 * 60,
 )
 
 # Máximo por envío (puede incluir varios PDFs): 100 MB
@@ -78,6 +98,18 @@ conversation_service.init_db(
 )
 
 ucontact_service.init_tablas()
+
+usuarios_service.init_tablas()
+
+# Administrador inicial (se define en Render con ADMIN_USUARIO y ADMIN_CLAVE)
+_resultado_admin = usuarios_service.asegurar_admin(
+    os.environ.get("ADMIN_USUARIO", ""),
+    os.environ.get("ADMIN_CLAVE", ""),
+    resetear=os.environ.get("ADMIN_RESETEAR_CLAVE", "").strip().lower()
+    in ("1", "true", "si", "sí", "yes", "on")
+)
+
+print(f"Administrador inicial: {_resultado_admin}")
 
 
 # Parámetros del procesamiento de PDFs
@@ -389,6 +421,7 @@ def render_seccion(section, **extra):
         simulado=MODO_SIMULADO,
         kb_persistente=kb_en_disco_persistente(),
         productos=agent_service.PRODUCTOS,
+        max_pdfs=MAX_PDFS_POR_ENVIO,
         **extra
     )
 
@@ -831,6 +864,409 @@ def procesar_documento(doc_id, ruta_pdf):
 # PÁGINAS
 # ============================================================
 
+# ============================================================
+# LOGIN Y USUARIOS
+# ============================================================
+# Los usuarios se crean desde la pantalla "Usuarios" (solo administradores)
+# y se guardan en la base de datos. El primer administrador se crea al
+# arrancar con las variables de entorno ADMIN_USUARIO y ADMIN_CLAVE.
+# Para desactivar el login en una PC local: AUTH_DESACTIVADA=1.
+
+AUTH_DESACTIVADA = os.environ.get("AUTH_DESACTIVADA", "").strip().lower() in (
+    "1", "true", "si", "sí", "yes", "on"
+)
+
+# Rutas que no piden sesión: el login mismo, los archivos estáticos y /health.
+# El webhook de uContact se protege con su propia clave UCONTACT_API_KEY.
+RUTAS_PUBLICAS = ("login", "static", "health")
+
+PREFIJOS_PUBLICOS = ("/api/ucontact/",)
+
+# Anti fuerza bruta: 5 intentos fallidos por IP = 5 minutos bloqueado
+_INTENTOS = {}
+MAX_INTENTOS_LOGIN = 5
+BLOQUEO_SEGUNDOS = 300
+
+
+def _ip_cliente():
+
+    reenviada = request.headers.get("X-Forwarded-For", "")
+
+    return (reenviada.split(",")[0].strip() if reenviada else "") \
+        or request.remote_addr or "?"
+
+
+def _bloqueado(ip):
+
+    registro = _INTENTOS.get(ip)
+
+    if not registro:
+        return False
+
+    fallos, hasta = registro
+
+    if hasta and time.time() < hasta:
+        return True
+
+    if hasta and time.time() >= hasta:
+        _INTENTOS.pop(ip, None)
+
+    return False
+
+
+def _registrar_fallo(ip):
+
+    fallos, hasta = _INTENTOS.get(ip, (0, 0))
+
+    fallos += 1
+
+    hasta = time.time() + BLOQUEO_SEGUNDOS if fallos >= MAX_INTENTOS_LOGIN else 0
+
+    _INTENTOS[ip] = (fallos, hasta)
+
+
+def _destino_seguro(destino):
+    """Solo se vuelve a rutas internas (evita redirecciones a otros sitios)."""
+
+    destino = destino or ""
+
+    if destino.startswith("/") and not destino.startswith("//") \
+            and "\\" not in destino:
+        return destino
+
+    return "/"
+
+
+def _usuario_de_la_sesion():
+    """
+    Usuario de la sesión, releído de la base en cada pedido: si se lo
+    desactiva, se le cambia la clave o se lo elimina, la sesión deja de
+    valer enseguida.
+    """
+
+    uid = session.get("uid")
+
+    if not uid:
+        return None
+
+    fila = usuarios_service.obtener(uid)
+
+    if (
+        not fila
+        or not fila["activo"]
+        or session.get("sv") != usuarios_service.firma_sesion(fila)
+    ):
+        session.clear()
+        return None
+
+    return fila
+
+
+def _iniciar_sesion(fila):
+
+    session.clear()
+    session["uid"] = fila["id"]
+    session["sv"] = usuarios_service.firma_sesion(fila)
+    session.permanent = True
+
+
+@app.before_request
+def exigir_login():
+
+    g.usuario = None
+
+    if AUTH_DESACTIVADA:
+        g.usuario = {"id": 0, "usuario": "local", "rol": "admin"}
+        return None
+
+    if request.endpoint in RUTAS_PUBLICAS and request.endpoint != "health":
+        return None
+
+    if request.path.startswith(PREFIJOS_PUBLICOS):
+        return None
+
+    g.usuario = _usuario_de_la_sesion()
+
+    if request.endpoint in RUTAS_PUBLICAS:
+        return None
+
+    if g.usuario:
+        return None
+
+    # Llamadas de la página (fetch): se responde JSON, no una redirección
+    if request.path.startswith("/playground/chat"):
+
+        return jsonify({
+            "error": "Tu sesión venció. Recargá la página e iniciá sesión."
+        }), 401
+
+    return redirect(url_for("login", next=request.full_path.rstrip("?")))
+
+
+@app.context_processor
+def datos_de_sesion():
+
+    return {"usuario_actual": getattr(g, "usuario", None)}
+
+
+@app.after_request
+def no_guardar_en_cache(respuesta):
+
+    # Las pantallas con datos internos no se guardan en el navegador
+    if getattr(g, "usuario", None):
+        respuesta.headers["Cache-Control"] = "no-store"
+
+    return respuesta
+
+
+def solo_admin(vista):
+    """Decorador: la ruta solo la puede usar un administrador."""
+
+    from functools import wraps
+
+    @wraps(vista)
+    def envoltura(*args, **kwargs):
+
+        usuario = getattr(g, "usuario", None)
+
+        if not usuario or usuario["rol"] != "admin":
+
+            flash("Esta sección es solo para administradores.")
+
+            return redirect(url_for("home"))
+
+        return vista(*args, **kwargs)
+
+    return envoltura
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+
+    destino = _destino_seguro(
+        request.values.get("next") or request.args.get("next")
+    )
+
+    if AUTH_DESACTIVADA or _usuario_de_la_sesion():
+        return redirect(destino)
+
+    if request.method == "GET":
+        return render_template("login.html", error="", next=destino)
+
+    ip = _ip_cliente()
+
+    if not usuarios_service.cantidad():
+
+        return render_template(
+            "login.html",
+            error="Todavía no hay usuarios: falta definir ADMIN_USUARIO y "
+                  "ADMIN_CLAVE en el servidor.",
+            next=destino
+        ), 503
+
+    if _bloqueado(ip):
+
+        return render_template(
+            "login.html",
+            error="Demasiados intentos. Probá de nuevo en unos minutos.",
+            next=destino
+        ), 429
+
+    fila = usuarios_service.verificar(
+        request.form.get("usuario", ""),
+        request.form.get("clave", "")
+    )
+
+    if not fila:
+
+        _registrar_fallo(ip)
+
+        return render_template(
+            "login.html",
+            error="Usuario o contraseña incorrectos.",
+            next=destino
+        ), 401
+
+    _INTENTOS.pop(ip, None)
+
+    _iniciar_sesion(fila)
+
+    return redirect(destino)
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+
+    session.clear()
+
+    return redirect(url_for("login"))
+
+
+# ---- Mi cuenta (cualquier usuario) ------------------------------------
+
+@app.route("/cuenta")
+def cuenta():
+    return render_seccion("cuenta")
+
+
+@app.route("/cuenta/clave", methods=["POST"])
+def cuenta_clave():
+
+    usuario = g.usuario
+
+    if AUTH_DESACTIVADA or not usuario:
+
+        flash("El login está desactivado en este servidor.")
+
+        return redirect(url_for("cuenta"))
+
+    actual = request.form.get("clave_actual", "")
+    nueva = request.form.get("clave_nueva", "")
+    repetida = request.form.get("clave_repetida", "")
+
+    if not usuarios_service.verificar(usuario["usuario"], actual):
+
+        flash("La contraseña actual no es correcta.")
+
+    elif nueva != repetida:
+
+        flash("La contraseña nueva y su repetición no coinciden.")
+
+    else:
+
+        error = usuarios_service.cambiar_clave(usuario["id"], nueva)
+
+        if error:
+
+            flash(error)
+
+        else:
+
+            # Se renueva la sesión de este usuario; las demás quedan cerradas
+            _iniciar_sesion(usuarios_service.obtener(usuario["id"]))
+
+            flash("Contraseña actualizada.")
+
+    return redirect(url_for("cuenta"))
+
+
+# ---- Administración de usuarios (solo admin) --------------------------
+
+@app.route("/usuarios")
+@solo_admin
+def usuarios():
+
+    return render_seccion(
+        "usuarios",
+        lista_usuarios=usuarios_service.listar(),
+        roles=usuarios_service.ROLES
+    )
+
+
+@app.route("/usuarios/crear", methods=["POST"])
+@solo_admin
+def usuarios_crear():
+
+    error = usuarios_service.crear(
+        request.form.get("usuario", ""),
+        request.form.get("clave", ""),
+        request.form.get("rol", "usuario")
+    )
+
+    flash(error or "Usuario creado.")
+
+    return redirect(url_for("usuarios"))
+
+
+@app.route("/usuarios/<int:usuario_id>/clave", methods=["POST"])
+@solo_admin
+def usuarios_clave(usuario_id):
+
+    if not usuarios_service.obtener(usuario_id):
+
+        flash("No se encontró el usuario.")
+
+    else:
+
+        error = usuarios_service.cambiar_clave(
+            usuario_id, request.form.get("clave", "")
+        )
+
+        flash(error or "Contraseña restablecida. Se cerró su sesión.")
+
+        # Si el admin se cambió la propia, se le renueva la sesión
+        if not error and usuario_id == g.usuario["id"] and not AUTH_DESACTIVADA:
+            _iniciar_sesion(usuarios_service.obtener(usuario_id))
+
+    return redirect(url_for("usuarios"))
+
+
+@app.route("/usuarios/<int:usuario_id>/estado", methods=["POST"])
+@solo_admin
+def usuarios_estado(usuario_id):
+
+    if usuario_id == g.usuario["id"]:
+
+        flash("No podés desactivar tu propio usuario.")
+
+        return redirect(url_for("usuarios"))
+
+    objetivo = usuarios_service.obtener(usuario_id)
+
+    if not objetivo:
+
+        flash("No se encontró el usuario.")
+
+    else:
+
+        error = usuarios_service.cambiar_activo(
+            usuario_id, not objetivo["activo"]
+        )
+
+        flash(error or (
+            "Usuario desactivado." if objetivo["activo"]
+            else "Usuario activado."
+        ))
+
+    return redirect(url_for("usuarios"))
+
+
+@app.route("/usuarios/<int:usuario_id>/rol", methods=["POST"])
+@solo_admin
+def usuarios_rol(usuario_id):
+
+    if usuario_id == g.usuario["id"]:
+
+        flash("No podés cambiar tu propio rol.")
+
+        return redirect(url_for("usuarios"))
+
+    error = usuarios_service.cambiar_rol(
+        usuario_id, request.form.get("rol", "")
+    )
+
+    flash(error or "Rol actualizado.")
+
+    return redirect(url_for("usuarios"))
+
+
+@app.route("/usuarios/<int:usuario_id>/eliminar", methods=["POST"])
+@solo_admin
+def usuarios_eliminar(usuario_id):
+
+    if usuario_id == g.usuario["id"]:
+
+        flash("No podés eliminar tu propio usuario.")
+
+        return redirect(url_for("usuarios"))
+
+    error = usuarios_service.eliminar(usuario_id)
+
+    flash(error or "Usuario eliminado.")
+
+    return redirect(url_for("usuarios"))
+
+
 @app.route("/")
 def home():
     return render_seccion(None)
@@ -880,6 +1316,22 @@ def playground():
 # SUBIR DOCUMENTO
 # ============================================================
 
+def _valor_de_lista(lista, indice, por_defecto=""):
+    """
+    Valor del campo para el archivo número `indice`. Cada PDF trae su propia
+    configuración (los campos del formulario se repiten, uno por archivo y
+    en el mismo orden). Si falta alguno, se usa el primero.
+    """
+
+    if indice < len(lista):
+        return str(lista[indice]).strip()
+
+    if lista:
+        return str(lista[0]).strip()
+
+    return por_defecto
+
+
 @app.route("/knowledge/upload", methods=["POST"])
 def knowledge_upload():
 
@@ -903,14 +1355,19 @@ def knowledge_upload():
 
         return redirect(url_for("knowledge"))
 
-    varios = len(archivos) > 1
-
-    nombre_manual = request.form.get("nombre_documento", "").strip()
+    # Configuración de cada archivo (una entrada por PDF, en el mismo orden)
+    campos = {
+        nombre: request.form.getlist(nombre)
+        for nombre in (
+            "producto", "categoria", "subcategoria", "nivel",
+            "estado", "fuente", "descripcion"
+        )
+    }
 
     recibidos = 0
     rechazados = []
 
-    for archivo in archivos:
+    for indice, archivo in enumerate(archivos):
 
         nombre_archivo = secure_filename(archivo.filename)
 
@@ -946,28 +1403,28 @@ def knowledge_upload():
 
         print(f"PDF guardado: {ruta_pdf}")
 
-        # Con varios archivos, cada documento usa el nombre de su archivo;
-        # el campo "Nombre del documento" solo aplica a una subida individual.
-        if varios or not nombre_manual:
-            nombre = os.path.splitext(archivo.filename)[0].strip()
-        else:
-            nombre = nombre_manual
+        # El nombre del documento es directamente el nombre del archivo
+        nombre = os.path.splitext(archivo.filename)[0].strip()
+
+        categoria = _valor_de_lista(campos["categoria"], indice)
+
+        if categoria.lower().startswith("seleccionar"):
+            categoria = ""
+
+        producto = _valor_de_lista(campos["producto"], indice)
 
         documento = {
             "id": doc_id,
             "archivo": nombre_archivo,
             "ruta_pdf": ruta_pdf.replace("\\", "/"),
             "nombre": nombre,
-            "producto": agent_service.normalizar_producto(
-                request.form.get("producto"),
-                request.form.get("producto", "").strip()
-            ),
-            "categoria": request.form.get("categoria", "").strip(),
-            "subcategoria": request.form.get("subcategoria", "").strip(),
-            "nivel": request.form.get("nivel", "").strip(),
-            "estado": request.form.get("estado", "").strip(),
-            "fuente": request.form.get("fuente", "").strip(),
-            "descripcion": request.form.get("descripcion", "").strip(),
+            "producto": agent_service.normalizar_producto(producto, producto),
+            "categoria": categoria,
+            "subcategoria": _valor_de_lista(campos["subcategoria"], indice),
+            "nivel": _valor_de_lista(campos["nivel"], indice),
+            "estado": _valor_de_lista(campos["estado"], indice),
+            "fuente": _valor_de_lista(campos["fuente"], indice),
+            "descripcion": _valor_de_lista(campos["descripcion"], indice),
             "texto_extraido": "",
             "imagenes": [],
             "cantidad_imagenes": 0,
@@ -1401,6 +1858,7 @@ def ucontact_cierre():
 # ============================================================
 
 @app.route("/knowledge/backup")
+@solo_admin
 def knowledge_backup():
     """Descarga un ZIP con todos los PDFs, lo procesado y las conversaciones."""
 
@@ -1461,6 +1919,7 @@ def knowledge_backup():
 
 
 @app.route("/knowledge/restore", methods=["POST"])
+@solo_admin
 def knowledge_restore():
     """Restaura PDFs y documentos desde un ZIP generado por /knowledge/backup."""
 
@@ -1570,10 +2029,18 @@ def ver_documento(doc_id):
 @app.route("/health")
 def health():
 
-    return {
+    # Público (lo usan los controles de Render): solo estado y versión.
+    # El detalle de la configuración se muestra únicamente con sesión.
+    basico = {
         "status": "ok",
         "service": "Zoo Logic AI Agents",
         "version": APP_VERSION,
+    }
+
+    if not getattr(g, "usuario", None):
+        return basico
+
+    basico.update({
         "openai_configurado": bool(client),
         "proveedor": (
             "simulado" if MODO_SIMULADO
@@ -1582,15 +2049,19 @@ def health():
         ),
         "modelo_agente": MODELO_AGENTE,
         "ucontact_configurado": bool(UCONTACT_API_KEY),
+        "login_configurado": usuarios_service.cantidad() > 0,
         "productos": agent_service.PRODUCTOS,
         "kb_en_disco_persistente": kb_en_disco_persistente(),
         "documentos_en_kb": len(cargar_documentos()),
         "conversaciones_db": conversation_service.DB_PATH,
         "knowledge_dir": KNOWLEDGE_DIR
-    }
+    })
+
+    return basico
 
 
 @app.route("/debug/routes")
+@solo_admin
 def debug_routes():
 
     lineas = []
@@ -1622,7 +2093,7 @@ def metodo_no_permitido(error):
 @app.errorhandler(413)
 def archivo_muy_grande(error):
 
-    flash("El PDF supera el máximo permitido (50 MB).")
+    flash("La subida supera el máximo permitido (100 MB en total por envío).")
 
     return redirect(url_for("knowledge"))
 
