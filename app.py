@@ -1613,8 +1613,8 @@ def conexiones_crear():
     if not crypto_service.disponible():
 
         flash(
-            "Para guardar credenciales hace falta definir FLASK_SECRET_KEY "
-            "en Render (una clave fija)."
+            "No se pudo preparar el cifrado de las credenciales. Definí "
+            "FLASK_SECRET_KEY en Render (una clave larga y fija)."
         )
 
         return redirect(url_for("conexiones"))
@@ -2663,6 +2663,7 @@ def health():
         "ucontact_configurado": bool(UCONTACT_API_KEY),
         "login_configurado": usuarios_service.cantidad() > 0,
         "conexiones_cifrado_ok": crypto_service.disponible(),
+        "conexiones_clave_origen": crypto_service.origen_de_la_clave(),
         "sync_intervalo_min": SYNC_INTERVALO_MIN,
         "whatsapp_incluye_pendientes": WHATSAPP_INCLUIR_PENDIENTES,
         "productos": agent_service.PRODUCTOS,
