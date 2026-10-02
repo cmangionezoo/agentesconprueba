@@ -874,6 +874,7 @@
                             <th>Agente</th>
                             <th>Atiende</th>
                             <th>Estado</th>
+                            <th>Documentos<br><small>(Vigentes L1)</small></th>
                             <th>Conversaciones</th>
                             <th>Resueltas</th>
                             <th>Derivadas</th>
@@ -886,7 +887,7 @@
                     <tbody>
                         {% for p in productos %}
                         <tr>
-                            <td colspan="8" style="background:#f3f4f6; font-weight:bold;">{{ p }}</td>
+                            <td colspan="9" style="background:#f3f4f6; font-weight:bold;">{{ p }}</td>
                         </tr>
 
                         {% for a in agentes if a.producto == p %}
@@ -909,6 +910,14 @@
                                 <span class="tag green">Activo</span>
                                 {% else %}
                                 <span class="tag yellow">Pausado</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {{ a.docs }}
+                                {% if a.categoria and a.docs == 0 %}
+                                <br><span class="tag yellow" title="Este especialista no tiene documentos de su tipificación: va a usar los del producto completo">Sin documentos</span>
+                                {% elif not a.categoria %}
+                                <br><small class="muted">del producto</small>
                                 {% endif %}
                             </td>
                             <td>{{ a.total }}{% if a.en_curso %}<br><small>{{ a.en_curso }} en curso</small>{% endif %}</td>
@@ -939,7 +948,7 @@
 
                         {% if usuario_actual and usuario_actual.rol == "admin" %}
                         <tr id="agEditar{{ a.id }}" style="display:none;">
-                            <td colspan="8" style="background:#f9fafb;">
+                            <td colspan="9" style="background:#f9fafb;">
                                 <form method="POST" action="/agentes/{{ a.id }}/editar">
                                     <div class="grid">
                                         <div>
@@ -988,6 +997,12 @@
             <div style="margin-top:16px;">
 
                 <strong>{{ p }}</strong>
+                <span class="muted" style="margin-left:8px;">
+                    {{ cobertura[p].usables }} documento(s) usables por el agente
+                    {% if cobertura[p].sin_categoria_valida %}
+                    · <span class="tag yellow">{{ cobertura[p].sin_categoria_valida }} sin categoría válida</span>
+                    {% endif %}
+                </span>
 
                 {% set lista = lista_tipificaciones|selectattr("producto", "equalto", p)|list %}
 
@@ -2120,8 +2135,35 @@
             <h2>Documentos</h2>
 
             <p class="muted">
-                Documentación disponible en la Knowledge Base seleccionada.
+                Documentación disponible en la Knowledge Base. Cada agente usa
+                solo la de su producto (y los documentos sin producto, que son
+                compartidos); los especialistas buscan primero en su tipificación.
             </p>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px;">
+
+                <select id="kbFiltroProducto" onchange="kbFiltrar(true)" style="width:auto;">
+                    <option value="">Todos los productos</option>
+                    {% for p in productos %}
+                    <option value="{{ p }}">{{ p }}</option>
+                    {% endfor %}
+                    <option value="__sin__">Compartidos (sin producto)</option>
+                </select>
+
+                <select id="kbFiltroCategoria" onchange="kbFiltrar(false)" style="width:auto;">
+                    <option value="">Todas las categorías</option>
+                </select>
+
+                <select id="kbFiltroEstado" onchange="kbFiltrar(false)" style="width:auto;">
+                    <option value="">Todos los estados</option>
+                    <option>Vigente</option>
+                    <option>Pendiente de revisión</option>
+                    <option>Archivado</option>
+                </select>
+
+                <span class="muted" id="kbContador"></span>
+
+            </div>
 
 
             <div style="overflow-x:auto;">
@@ -2150,7 +2192,10 @@
 
                             {% for documento in documentos %}
 
-                            <tr>
+                            <tr class="kb-fila"
+                                data-producto="{{ documento.producto }}"
+                                data-categoria="{{ documento.categoria }}"
+                                data-estado="{{ documento.estado }}">
 
                                 <td>
                                     📄 {{ documento.nombre or documento.archivo }}
@@ -2177,7 +2222,11 @@
                                 </td>
 
                                 <td>
-                                    {{ documento.producto }}
+                                    {% if documento.producto %}
+                                        {{ documento.producto }}
+                                    {% else %}
+                                        <span class="muted">Todos<br><small>(compartido)</small></span>
+                                    {% endif %}
                                 </td>
 
                                 <td>
@@ -3825,6 +3874,7 @@
             var pgHistorial = [];
             var pgEstado = null;
             var pgAgente = null;
+            var pgAlcance = "";
             var pgConversacionId = "";
             var pgEnviando = false;
 
@@ -3917,6 +3967,10 @@
                     ));
                 }
 
+                if (pgAlcance) {
+                    cont.appendChild(pgFila("Documentación consultada", pgAlcance));
+                }
+
                 cont.appendChild(pgFila("Categoría", estado.categoria));
                 cont.appendChild(pgFila("Subcategoría", estado.subcategoria));
                 cont.appendChild(pgFila("Etapa", estado.etapa));
@@ -3999,6 +4053,7 @@
                 pgHistorial = [];
                 pgEstado = null;
                 pgAgente = null;
+                pgAlcance = "";
                 pgConversacionId = "";
 
                 document.getElementById("pgChat").innerHTML = "";
@@ -4093,6 +4148,7 @@
 
                         pgEstado = datos.estado;
                         pgAgente = datos.agente || null;
+                        pgAlcance = datos.alcance_kb || "";
                         pgConversacionId = datos.conversacion_id || pgConversacionId;
 
                         pgPintarEstado(datos.estado, datos.fragmentos, datos.avisos);
@@ -4180,6 +4236,79 @@
 
     // Tipificaciones de cada producto (para los desplegables de categoría)
     window.TIPIFICACIONES = {{ tipificaciones|tojson }};
+
+    // Filtros de la lista de documentos
+    function kbFiltrar(cambioProducto) {
+
+        var fProducto = document.getElementById("kbFiltroProducto");
+
+        if (!fProducto) { return; }
+
+        var fCategoria = document.getElementById("kbFiltroCategoria");
+        var fEstado = document.getElementById("kbFiltroEstado");
+
+        if (cambioProducto || fCategoria.options.length <= 1) {
+
+            var producto = fProducto.value;
+
+            var lista = [];
+
+            if (producto && producto !== "__sin__") {
+                lista = window.TIPIFICACIONES[producto] || [];
+            } else {
+                Object.keys(window.TIPIFICACIONES).forEach(function (p) {
+                    window.TIPIFICACIONES[p].forEach(function (c) {
+                        if (lista.indexOf(c) < 0) { lista.push(c); }
+                    });
+                });
+            }
+
+            fCategoria.innerHTML = "";
+
+            [["", "Todas las categorías"]].concat(
+                lista.map(function (c) { return [c, c]; }),
+                [["__sin__", "Sin categoría"]]
+            ).forEach(function (par) {
+                var o = document.createElement("option");
+                o.value = par[0];
+                o.textContent = par[1];
+                fCategoria.appendChild(o);
+            });
+        }
+
+        var filas = document.querySelectorAll("tr.kb-fila");
+
+        var visibles = 0;
+
+        filas.forEach(function (fila) {
+
+            var p = fila.getAttribute("data-producto") || "";
+            var c = fila.getAttribute("data-categoria") || "";
+            var e = fila.getAttribute("data-estado") || "";
+
+            var ok = true;
+
+            if (fProducto.value === "__sin__") { ok = ok && p === ""; }
+            else if (fProducto.value) { ok = ok && p === fProducto.value; }
+
+            if (fCategoria.value === "__sin__") { ok = ok && c === ""; }
+            else if (fCategoria.value) { ok = ok && c === fCategoria.value; }
+
+            if (fEstado.value) { ok = ok && e === fEstado.value; }
+
+            fila.style.display = ok ? "" : "none";
+
+            if (ok) { visibles++; }
+        });
+
+        var contador = document.getElementById("kbContador");
+
+        if (contador) {
+            contador.textContent = visibles + " de " + filas.length + " documentos";
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded", function () { kbFiltrar(true); });
 
     function editProductoCambio() {
 
