@@ -930,14 +930,7 @@
                                         </button>
                                     </form>
 
-                                    {% if a.categoria %}
-                                    <form method="POST"
-                                          action="/agentes/{{ a.id }}/eliminar"
-                                          style="margin:0;"
-                                          onsubmit="return confirm('¿Eliminar a {{ a.nombre }}? Sus conversaciones anteriores se conservan.')">
-                                        <button type="submit" class="danger" style="padding:6px 10px; font-size:12px;">Eliminar</button>
-                                    </form>
-                                    {% endif %}
+                                    
 
                                 </div>
                             </td>
@@ -980,55 +973,96 @@
         </div>
 
 
-        {% if usuario_actual and usuario_actual.rol == "admin" %}
+        <div class="card" id="tipificaciones">
 
-        <div class="card">
+            <h3>Tipificaciones por producto</h3>
 
-            <h3>Agregar un especialista</h3>
+            <p class="muted">
+                Cada producto tiene sus propias tipificaciones, y cada una tiene su
+                <strong>agente especialista</strong>. Al agregar una se crea su agente;
+                al eliminarla se elimina. Los productos sin tipificaciones todavía no
+                tienen especialistas y su agente de recepción queda pausado.
+            </p>
 
-            <form method="POST" action="/agentes/crear">
+            {% for p in productos %}
+            <div style="margin-top:16px;">
 
-                <div class="grid">
+                <strong>{{ p }}</strong>
 
-                    <div>
-                        <label>Producto</label>
-                        <select name="producto">
-                            {% for p in productos %}
-                            <option>{{ p }}</option>
-                            {% endfor %}
-                        </select>
+                {% set lista = lista_tipificaciones|selectattr("producto", "equalto", p)|list %}
+
+                {% if lista %}
+
+                    {% if usuario_actual and usuario_actual.rol == "admin" %}
+
+                    {% for tp in lista %}
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px;">
+
+                        <form method="POST"
+                              action="/tipificaciones/{{ tp.id }}/renombrar"
+                              style="display:flex; gap:6px; margin:0;">
+                            <input type="text" name="nombre" value="{{ tp.nombre }}"
+                                   style="width:300px;" required>
+                            <button type="submit" class="secondary" style="padding:8px 12px; font-size:12px;">Renombrar</button>
+                        </form>
+
+                        <form method="POST"
+                              action="/tipificaciones/{{ tp.id }}/eliminar"
+                              style="margin:0;"
+                              onsubmit="return confirm('¿Eliminar la tipificación {{ tp.nombre }} de {{ p }} y su agente especialista? Las conversaciones anteriores se conservan.')">
+                            <button type="submit" class="danger" style="padding:8px 12px; font-size:12px;">Eliminar</button>
+                        </form>
+
+                    </div>
+                    {% endfor %}
+
+                    {% else %}
+
+                    <div class="tags">
+                        {% for tp in lista %}
+                        <span class="tag">{{ tp.nombre }}</span>
+                        {% endfor %}
                     </div>
 
-                    <div>
-                        <label>Categoría (tipificación)</label>
-                        <select name="categoria">
-                            {% for c in categorias_agente %}
-                            <option>{{ c }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
+                    {% endif %}
 
-                    <div>
-                        <label>Nombre (opcional)</label>
-                        <input type="text" name="nombre" placeholder="Ej. Agente Base de Datos · Lince">
-                    </div>
+                {% else %}
 
-                </div>
+                <p class="muted" style="margin:6px 0 0;">Todavía no tiene tipificaciones.</p>
 
-                <div style="margin-top:12px;">
-                    <label>Instrucciones propias (opcional)</label>
-                    <textarea name="instrucciones" style="min-height:80px;"></textarea>
-                </div>
+                {% endif %}
 
-                <div class="buttons">
-                    <button type="submit" class="primary">Agregar especialista</button>
-                </div>
+                {% if usuario_actual and usuario_actual.rol == "admin" %}
+                <form method="POST"
+                      action="/tipificaciones/crear"
+                      style="display:flex; gap:8px; margin-top:10px; align-items:center;">
+                    <input type="hidden" name="producto" value="{{ p }}">
+                    <input type="text" name="nombre" placeholder="Nueva tipificación de {{ p }}"
+                           style="width:300px;" required>
+                    <button type="submit" class="primary" style="padding:8px 12px; font-size:12px;">Agregar</button>
+                </form>
+                {% endif %}
 
+            </div>
+            {% endfor %}
+
+            {% if usuario_actual and usuario_actual.rol == "admin" %}
+            <hr style="border:none; border-top:1px solid #e5e7eb; margin:20px 0 14px;">
+
+            <form method="POST"
+                  action="/tipificaciones/retipificar"
+                  style="margin:0;"
+                  onsubmit="return confirm('La IA va a volver a decidir la categoría y subcategoría de los documentos cuya categoría no es una tipificación de su producto. No toca nivel, fuente, descripción ni estado. ¿Seguir?')">
+                <button type="submit" class="secondary">
+                    🤖 Tipificar los documentos con estas tipificaciones
+                </button>
+                <span class="muted" style="margin-left:8px;">
+                    Úsalo después de cargar o cambiar tipificaciones.
+                </span>
             </form>
+            {% endif %}
 
         </div>
-
-        {% endif %}
 
 
         <!-- ============================= -->
@@ -1776,7 +1810,7 @@
 
                         <div>
                             <label>Producto</label>
-                            <select name="producto">
+                            <select name="producto" onchange="upProductoCambio(this)">
                                 {% for p in productos %}
                                 <option>{{ p }}</option>
                                 {% endfor %}
@@ -1787,12 +1821,6 @@
                             <label>Categoría</label>
                             <select name="categoria">
                                 <option value="auto" selected>🤖 Automático (IA)</option>
-                                <option>Facturación Electrónica</option>
-                                <option>Mantenimiento</option>
-                                <option>Base de Datos</option>
-                                <option>Configuración</option>
-                                <option>Ecommerce</option>
-                                <option>Otros</option>
                             </select>
                         </div>
 
@@ -1944,6 +1972,9 @@
 
                 var nodo = plantilla.content.firstElementChild.cloneNode(true);
 
+                // Las categorías dependen del producto
+                upProductoCambio(nodo.querySelector('[name="producto"]'));
+
                 // Nombre del documento = nombre del archivo
                 nodo.querySelector(".up-nombre").textContent =
                     "📄 " + archivo.name.replace(/\.pdf$/i, "");
@@ -1968,6 +1999,29 @@
                 return nodo;
             }
 
+            // Rellena las categorías de la fila según su producto
+            function upProductoCambio(selectProducto) {
+
+                var fila = selectProducto.closest(".up-fila") || selectProducto.parentNode.parentNode.parentNode;
+
+                var categoria = fila.querySelector('[name="categoria"]');
+
+                var lista = (window.TIPIFICACIONES || {})[selectProducto.value] || [];
+
+                categoria.innerHTML = "";
+
+                var auto = document.createElement("option");
+                auto.value = "auto";
+                auto.textContent = "🤖 Automático (IA)";
+                categoria.appendChild(auto);
+
+                lista.forEach(function (c) {
+                    var o = document.createElement("option");
+                    o.textContent = c;
+                    categoria.appendChild(o);
+                });
+            }
+
             function upCopiarATodos() {
 
                 if (upNodos.length < 2) { return; }
@@ -1979,8 +2033,12 @@
                     ["producto", "categoria", "subcategoria", "nivel",
                      "estado", "fuente", "descripcion"].forEach(function (campo) {
 
-                        nodo.querySelector('[name="' + campo + '"]').value =
-                            origen.querySelector('[name="' + campo + '"]').value;
+                        var destino = nodo.querySelector('[name="' + campo + '"]');
+
+                        destino.value = origen.querySelector('[name="' + campo + '"]').value;
+
+                        // Al cambiar el producto hay que rehacer las categorías
+                        if (campo === "producto") { upProductoCambio(destino); }
                     });
                 });
             }
@@ -2354,7 +2412,7 @@
 
                             <div>
                                 <label>Producto</label>
-                                <select name="producto" id="editProducto">
+                                <select name="producto" id="editProducto" onchange="editProductoCambio()">
                                     <option value="">(sin producto: sirve para todos)</option>
                                     {% for p in productos %}
                                     <option>{{ p }}</option>
@@ -2366,12 +2424,6 @@
                                 <label>Categoría</label>
                                 <select name="categoria" id="editCategoria">
                                     <option value="">(sin categoría)</option>
-                                    <option>Facturación Electrónica</option>
-                                    <option>Mantenimiento</option>
-                                    <option>Base de Datos</option>
-                                    <option>Configuración</option>
-                                    <option>Ecommerce</option>
-                                    <option>Otros</option>
                                 </select>
                             </div>
 
@@ -4126,6 +4178,46 @@
        VER INFORMACIÓN DEL DOCUMENTO
        ============================================================ */
 
+    // Tipificaciones de cada producto (para los desplegables de categoría)
+    window.TIPIFICACIONES = {{ tipificaciones|tojson }};
+
+    function editProductoCambio() {
+
+        var producto = document.getElementById("editProducto").value;
+
+        var categoria = document.getElementById("editCategoria");
+
+        var actual = categoria.value;
+
+        var lista = [];
+
+        if (producto) {
+            lista = window.TIPIFICACIONES[producto] || [];
+        } else {
+            // Sin producto: todas las tipificaciones, sin repetir
+            Object.keys(window.TIPIFICACIONES).forEach(function (p) {
+                window.TIPIFICACIONES[p].forEach(function (c) {
+                    if (lista.indexOf(c) < 0) { lista.push(c); }
+                });
+            });
+        }
+
+        categoria.innerHTML = "";
+
+        var vacia = document.createElement("option");
+        vacia.value = "";
+        vacia.textContent = "(sin categoría)";
+        categoria.appendChild(vacia);
+
+        lista.forEach(function (c) {
+            var o = document.createElement("option");
+            o.textContent = c;
+            categoria.appendChild(o);
+        });
+
+        categoria.value = actual;
+    }
+
     function editarDocumento(
         id, nombre, producto, categoria, subcategoria,
         nivel, estado, fuente, descripcion
@@ -4161,6 +4253,7 @@
         }
 
         poner("editProducto", producto);
+        editProductoCambio();
         poner("editCategoria", categoria);
         poner("editSubcategoria", subcategoria);
         poner("editNivel", nivel);
