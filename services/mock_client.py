@@ -116,8 +116,8 @@ def _fragmentos(contexto):
     return resultado
 
 
-def _extracto(texto, maximo=380):
-    """Texto del fragmento, sin marcadores internos, recortado."""
+def _extracto(texto, maximo=700):
+    """Texto del fragmento, sin marcadores ni ruido, cortado en una frase."""
 
     limpio = re.sub(r"--- PÁGINA \d+ ---", "", texto)
 
@@ -127,12 +127,26 @@ def _extracto(texto, maximo=380):
         limpio
     )
 
+    # Ruido típico de páginas web impresas: URLs, fechas y "1/1"
+    limpio = re.sub(r"https?://\S+", "", limpio)
+
+    limpio = re.sub(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b", "", limpio)
+
+    limpio = re.sub(r"\b\d+/\d+\b", "", limpio)
+
     limpio = re.sub(r"\s+", " ", limpio).strip()
 
-    if len(limpio) > maximo:
-        limpio = limpio[:maximo].rsplit(" ", 1)[0] + "…"
+    if len(limpio) <= maximo:
+        return limpio
 
-    return limpio
+    corte = limpio[:maximo]
+
+    ultimo_punto = corte.rfind(". ")
+
+    if ultimo_punto > maximo * 0.5:
+        return corte[:ultimo_punto + 1] + " (…)"
+
+    return corte.rsplit(" ", 1)[0] + " (…)"
 
 
 # ============================================================
@@ -144,8 +158,16 @@ def _clasificar(mensaje):
     if _contiene(mensaje, ["base de datos", "sql", "tabla corrupta"]):
         return "Base de Datos", ""
 
-    if _contiene(mensaje, ["tienda nube", "ecommerce", "e-commerce",
-                           "tienda online", "pedido", "stock web"]):
+    if (
+        _contiene(mensaje, ["mercadolibre", "mercado libre", "meli",
+                            "publicacion"])
+        or re.search(r"\bml\b", _normalizar(mensaje))
+    ):
+        return "Ecommerce", "Mercado Libre"
+
+    if _contiene(mensaje, ["tienda nube", "tiendanube", "znube", "ecommerce",
+                           "e-commerce", "tienda online", "pedido",
+                           "stock web"]):
         return "Ecommerce", "Tienda Nube"
 
     if _contiene(mensaje, ["cae", "factur", "comprobante", "afip", "arca",
