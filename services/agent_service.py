@@ -11,6 +11,7 @@ busca documentación en la Knowledge Base y devuelve:
 """
 
 import json
+import os
 import re
 
 from services.knowledge_service import (
@@ -34,6 +35,14 @@ ETAPAS = [
 ]
 
 DESTINOS = ["L2", "Ecommerce", "Desarrollo", "MDA"]
+
+# Tope de seguridad: cantidad de procedimientos documentados completos que
+# no resolvieron el caso antes de derivar. Se puede cambiar desde Render con
+# la variable AGENTE_MAX_INTENTOS.
+try:
+    MAX_INTENTOS = max(1, int(os.environ.get("AGENTE_MAX_INTENTOS", "5")))
+except ValueError:
+    MAX_INTENTOS = 5
 
 MAX_MENSAJES_HISTORIAL = 16
 MAX_CHARS_MENSAJE = 2000
@@ -62,16 +71,37 @@ CÓMO TRABAJÁS
    lo confirme.
 7. Si no se resolvió o excede el nivel L1, derivá.
 
+TIPOS DE MENSAJE DEL CLIENTE (identificá cuál es antes de responder)
+- Falla o error ("no puedo obtener CAE", "me da un error"): preguntá el
+  mensaje exacto, qué estaba haciendo y desde cuándo pasa.
+- Consulta de cómo hacer algo ("cómo facturo", "cómo configuro la tienda"):
+  NO pidas un mensaje de error. Preguntá qué quiere lograr y en qué punto
+  está, y respondé con el procedimiento documentado.
+- Pregunta de seguimiento ("¿y cómo doy de alta los artículos?"): respondela
+  con la documentación. No cuenta como un intento fallido.
+- Confusión ("no entiendo"): explicá el mismo paso de otra manera, más simple,
+  o dividilo en pasos más chicos. No cuenta como un intento fallido.
+
 REGLAS ESTRICTAS
 - No inventes procedimientos, pasos, rutas de menú, nombres de botones ni
   datos técnicos. Usá únicamente lo que aparece en los fragmentos de
   documentación. Si un dato no está, no lo afirmes.
 - No indiques procedimientos de nivel L2 como si fueran L1.
 - No pidas ni propongas modificaciones directas sobre bases de datos.
-- No insistas indefinidamente: si ya probaste 2 soluciones documentadas y el
-  problema sigue, derivá.
-- Si no hay documentación relevante para el problema, no improvises. Podés
-  hacer preguntas para entender el caso, pero si ya está claro, derivá a MDA.
+- Esforzate de verdad por resolver el caso. No derives por apuro ni solo
+  porque pasaron algunos mensajes: seguí ayudando mientras haya
+  procedimientos o pasos documentados que todavía no se probaron y el
+  cliente esté avanzando.
+- Derivá únicamente cuando: (1) ya no quedan procedimientos documentados
+  distintos para probar, (2) el cliente repite el mismo resultado después de
+  los pasos documentados, (3) el cliente pide hablar con una persona,
+  (4) llegaste a __MAX_INTENTOS__ procedimientos documentados completos sin
+  éxito (tope de seguridad), o (5) corresponde por las reglas de derivación.
+- Si la documentación cubre solo una parte del problema, guiá esa parte y
+  aclarale al cliente qué queda fuera de lo que podés resolver.
+- Si no hay documentación relevante, no improvises. Hacé preguntas para
+  entender el caso; cuando esté claro y siga sin haber documentación, derivá
+  a MDA.
 - No hagas más de dos preguntas por mensaje ni mensajes largos.
 - Tono cordial y claro, en español rioplatense (voseo), sin tecnicismos
   innecesarios.
@@ -114,9 +144,10 @@ Respondé SIEMPRE con un único objeto JSON válido, sin texto fuera del JSON:
 - "fragmentos_usados": ids de los fragmentos de documentación en los que te
   basaste en este mensaje. Lista vacía si no usaste ninguno.
 - "informacion_recopilada" solo incluye lo que el cliente dijo realmente.
-- "intentos_solucion" cuenta las soluciones documentadas que ya se probaron
-  sin éxito.
-""".strip()
+- "intentos_solucion" cuenta solo los procedimientos documentados que el
+  cliente completó y no resolvieron el caso. No cuentes preguntas, dudas ni
+  pasos intermedios.
+""".strip().replace("__MAX_INTENTOS__", str(MAX_INTENTOS))
 
 
 # ============================================================
@@ -480,6 +511,15 @@ def responder(
         avisos.append(
             "El agente propuso o validó una solución pero no se recuperó "
             "documentación de la KB en este turno. Revisá la respuesta."
+        )
+
+    if (
+        estado["intentos_solucion"] >= MAX_INTENTOS
+        and not estado["derivacion"]["derivar"]
+    ):
+        avisos.append(
+            f"Se alcanzó el tope de {MAX_INTENTOS} intentos sin derivar. "
+            "Revisá si el agente debería haber derivado."
         )
 
     if (
