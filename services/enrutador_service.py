@@ -17,7 +17,7 @@ import re
 import unicodedata
 
 from services import agentes_service
-from services.tipificador_service import CATEGORIAS
+from services.tipificador_service import categoria_canonica  # noqa: F401
 
 
 MAX_REASIGNACIONES = 3
@@ -32,34 +32,6 @@ def _clave(texto):
     return re.sub(r"[^a-z0-9]", "", texto.lower())
 
 
-def categoria_canonica(valor):
-    """
-    Lleva lo que escribió el modelo a una categoría de la lista
-    ("facturacion" -> "Facturación Electrónica"). '' si no coincide.
-    """
-
-    buscado = _clave(valor)
-
-    if not buscado:
-        return ""
-
-    for categoria in CATEGORIAS:
-        if _clave(categoria) == buscado:
-            return categoria
-
-    # "Facturación" a secas, "Ecommerce / Tienda Nube", etc.
-    if len(buscado) >= 5:
-
-        for categoria in CATEGORIAS:
-
-            clave = _clave(categoria)
-
-            if clave.startswith(buscado) or buscado.startswith(clave):
-                return categoria
-
-    return ""
-
-
 def _contexto(agente, producto):
     """Lo que el prompt necesita saber del agente."""
 
@@ -67,6 +39,7 @@ def _contexto(agente, producto):
         "categoria": agente["categoria"] if agente else "",
         "instrucciones": agente["instrucciones"] if agente else "",
         "especialistas": agentes_service.categorias_con_especialista(producto),
+        "categorias": agentes_service.tipificaciones(producto),
     }
 
 
@@ -127,7 +100,9 @@ def atender(responder, producto, estado_previo, agente_id=None,
 
     estado = resultado["estado"]
 
-    canonica = categoria_canonica(estado.get("categoria"))
+    categorias = agentes_service.tipificaciones(producto)
+
+    canonica = categoria_canonica(estado.get("categoria"), categorias)
 
     if canonica:
         estado["categoria"] = canonica
@@ -154,7 +129,7 @@ def atender(responder, producto, estado_previo, agente_id=None,
 
             estado = resultado["estado"]
 
-            nueva = categoria_canonica(estado.get("categoria"))
+            nueva = categoria_canonica(estado.get("categoria"), categorias)
 
             if nueva:
                 estado["categoria"] = nueva
