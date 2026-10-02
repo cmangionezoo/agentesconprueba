@@ -135,7 +135,8 @@ def buscar_fragmentos(
     incluir_pendientes=True,
     max_fragmentos=6,
     max_chars_total=7000,
-    categoria=None
+    categoria=None,
+    categoria_estricta=False
 ):
 
     candidatos = []
@@ -144,6 +145,15 @@ def buscar_fragmentos(
 
         if not documento_elegible(doc, incluir_pendientes, producto):
             continue
+
+        # Búsqueda estricta (agente especialista): solo documentos de su
+        # categoría o sin categorizar. Los de otra categoría quedan afuera.
+        if categoria and categoria_estricta:
+
+            cat_doc = normalizar(doc.get("categoria") or "")
+
+            if cat_doc and cat_doc != normalizar(categoria):
+                continue
 
         meta = " ".join([
             doc.get("nombre") or "",
