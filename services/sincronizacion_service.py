@@ -59,7 +59,7 @@ def sincronizar(conexion_id, host, http=None, max_mb=40):
     if not conexiones_service.iniciar_sync(conexion_id):
         return {"error": "Ya hay una sincronización en curso."}
 
-    nuevos = actualizados = archivados = 0
+    nuevos = actualizados = archivados = sin_producto = 0
     errores = []
 
     try:
@@ -137,14 +137,20 @@ def sincronizar(conexion_id, host, http=None, max_mb=40):
                         "ruta": remoto.ruta,
                     },
                     "tipificar_ia": bool(conexion["tipificar_ia"]),
+                    "vigente_auto": bool(conexion["auto_vigente"]),
                 }
 
                 if existe:
                     host.actualizar(doc_id, ruta_pdf, datos)
                     actualizados += 1
                 else:
-                    host.crear(doc_id, ruta_pdf, datos)
+                    estado = host.crear(doc_id, ruta_pdf, datos)
                     nuevos += 1
+
+                    # Con "Vigente automático", los que no tienen producto
+                    # quedan Pendientes (se usarían para todos los productos)
+                    if datos["vigente_auto"] and estado != "Vigente":
+                        sin_producto += 1
 
                 conexiones_service.guardar_mapa(
                     conexion_id, remoto.id, doc_id, remoto.firma,
@@ -175,6 +181,12 @@ def sincronizar(conexion_id, host, http=None, max_mb=40):
             f"{archivados} archivado(s)",
             f"{len(errores)} con error",
         ]
+
+        if sin_producto:
+            partes.append(
+                f"{sin_producto} sin producto (quedaron Pendientes: "
+                "definí su producto y confirmalos)"
+            )
 
         resultado = ", ".join(partes)
 
