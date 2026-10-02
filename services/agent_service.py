@@ -18,7 +18,6 @@ from services.knowledge_service import (
     buscar_fragmentos,
     categorias_disponibles,
 )
-from services.tipificador_service import CATEGORIAS
 
 
 # Productos que atiende el agente. El primero es el de por defecto.
@@ -84,10 +83,6 @@ integración). Todas son consultas y las atendés con el mismo criterio:
 entender qué necesita el cliente y ayudarlo con lo que está documentado.
 NO asumas que el cliente tiene un error ni le pidas un mensaje de error si
 no está reportando una falla.
-
-ALCANCE ACTUAL (piloto): Facturación Electrónica y Ecommerce. Si la consulta
-es de otra categoría (Base de Datos, Mantenimiento, Configuración, Otros),
-igual la clasificás y la tratás con las mismas reglas.
 
 CÓMO TRABAJÁS
 1. Si el cliente todavía no planteó su consulta, preguntale en qué lo podés
@@ -206,12 +201,20 @@ def _prompt_para(producto, agente=None):
     especialistas = agente.get("especialistas") or []
     instrucciones = (agente.get("instrucciones") or "").strip()
 
-    secciones = [
-        "CATEGORÍAS VÁLIDAS\n"
-        "El campo \"categoria\" del estado tiene que ser EXACTAMENTE una de "
-        "estas: " + ", ".join(CATEGORIAS) + ". Usá \"Otros\" solo si "
-        "ninguna encaja."
-    ]
+    categorias = agente.get("categorias") or []
+
+    secciones = []
+
+    if categorias:
+
+        secciones.append(
+            "CATEGORÍAS (TIPIFICACIONES) VÁLIDAS DE " + producto.upper() + "\n"
+            "El campo \"categoria\" del estado tiene que ser EXACTAMENTE una "
+            "de estas, tal cual están escritas: "
+            + " | ".join(categorias)
+            + ". Si ninguna encaja todavía, dejalo vacío y seguí "
+            "preguntando para entender qué necesita el cliente."
+        )
 
     if categoria:
 
@@ -253,6 +256,9 @@ def _prompt_para(producto, agente=None):
     texto = SYSTEM_PROMPT.replace("__PRODUCTO__", producto)
 
     adicional = "\n\n".join(secciones)
+
+    if not adicional:
+        return SYSTEM_PROMPT.replace("__PRODUCTO__", producto)
 
     if "FORMATO DE RESPUESTA" in texto:
         return texto.replace(
