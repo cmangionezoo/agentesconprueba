@@ -12,7 +12,7 @@ import os
 import sqlite3
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 DB_PATH = None
@@ -94,6 +94,11 @@ def init_db(ruta):
             doc_id TEXT,
             documento TEXT,
             pagina INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS ajustes (
+            clave TEXT PRIMARY KEY,
+            valor TEXT NOT NULL DEFAULT ''
         );
 
         CREATE INDEX IF NOT EXISTS idx_mensajes_conv
@@ -385,6 +390,83 @@ def _formatear_duracion(segundos):
         return f"{minutos:.1f} min"
 
     return f"{minutos / 60:.1f} h"
+
+
+# ============================================================
+# AJUSTES SIMPLES (por ejemplo, agente pausado)
+# ============================================================
+
+def obtener_ajuste(clave, defecto=""):
+
+    with _conectar() as db:
+
+        fila = db.execute(
+            "SELECT valor FROM ajustes WHERE clave = ?", (clave,)
+        ).fetchone()
+
+    return fila["valor"] if fila else defecto
+
+
+def guardar_ajuste(clave, valor):
+
+    with _LOCK, _conectar() as db:
+        db.execute(
+            "INSERT OR REPLACE INTO ajustes (clave, valor) VALUES (?, ?)",
+            (clave, str(valor))
+        )
+
+
+# ============================================================
+# RESUMEN RÁPIDO (pantallas Inicio y Agentes)
+# ============================================================
+
+def _porcentaje(parte, total):
+
+    if not total:
+        return "—"
+
+    return f"{parte * 100 / total:.1f}".replace(".", ",") + "%"
+
+
+def resumen_rapido():
+    """
+    Números reales de todas las conversaciones guardadas (WhatsApp, Playground
+    y simulación). "Hoy" es el día calendario de Argentina (UTC-3).
+    """
+
+    zona = timezone(timedelta(hours=-3))
+
+    inicio_hoy = datetime.now(zona).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+    with _conectar() as db:
+
+        total = db.execute("SELECT COUNT(*) FROM conversaciones").fetchone()[0]
+
+        resueltas = db.execute(
+            "SELECT COUNT(*) FROM conversaciones "
+            "WHERE derivada = 0 AND etapa = 'Resuelto'"
+        ).fetchone()[0]
+
+        derivadas = db.execute(
+            "SELECT COUNT(*) FROM conversaciones WHERE derivada = 1"
+        ).fetchone()[0]
+
+        hoy = db.execute(
+            "SELECT COUNT(*) FROM conversaciones WHERE creada >= ?",
+            (inicio_hoy,)
+        ).fetchone()[0]
+
+    return {
+        "total": total,
+        "resueltas": resueltas,
+        "derivadas": derivadas,
+        "en_curso": total - resueltas - derivadas,
+        "hoy": hoy,
+        "pct_resueltas": _porcentaje(resueltas, total),
+        "pct_derivadas": _porcentaje(derivadas, total),
+    }
 
 
 def calcular_metricas(canal=None):
