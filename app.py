@@ -36,8 +36,11 @@ import fitz
 from openai import OpenAI, AzureOpenAI
 
 from services import (
-    agent_service, conversation_service, ucontact_service, usuarios_service
+    agent_service, conversation_service, ucontact_service, usuarios_service,
+    conexiones_service, crypto_service, proveedores_nube,
+    sincronizacion_service, tipificador_service
 )
+from services.tipificador_service import ErrorTipificacion
 from services.mock_client import MockClient
 
 
@@ -101,6 +104,8 @@ ucontact_service.init_tablas()
 
 usuarios_service.init_tablas()
 
+conexiones_service.init_tablas()
+
 # Administrador inicial (se define en Render con ADMIN_USUARIO y ADMIN_CLAVE)
 _resultado_admin = usuarios_service.asegurar_admin(
     os.environ.get("ADMIN_USUARIO", ""),
@@ -161,11 +166,37 @@ UCONTACT_API_KEY = os.environ.get("UCONTACT_API_KEY", "").strip()
 
 LOCK = threading.RLock()
 
+# ---- Sincronización con Drive / SharePoint / OneDrive ----------------
+# Cada cuántos minutos se revisan las conexiones con sincronización
+# automática (0 = solo manual) y tamaño máximo por archivo descargado.
+try:
+    SYNC_INTERVALO_MIN = int(os.environ.get("SYNC_INTERVALO_MIN", "60"))
+except ValueError:
+    SYNC_INTERVALO_MIN = 60
+
+try:
+    SYNC_MAX_MB = int(os.environ.get("SYNC_MAX_MB", "40"))
+except ValueError:
+    SYNC_MAX_MB = 40
+
+# En WhatsApp el agente usa solo documentos "Vigente". Los "Pendiente de
+# revisión" (por ejemplo los recién sincronizados) se prueban en el Playground.
+# Para que WhatsApp también los use: WHATSAPP_INCLUIR_PENDIENTES=1.
+WHATSAPP_INCLUIR_PENDIENTES = os.environ.get(
+    "WHATSAPP_INCLUIR_PENDIENTES", ""
+).strip().lower() in ("1", "true", "si", "sí", "yes", "on")
+
+# Se reemplaza solo en las pruebas (para no usar la red)
+HTTP_NUBE = None
+
 # Máximo de PDFs por envío y de PDFs procesándose a la vez.
 # Se procesan de a 2 para no pasarse del límite de la API ni de memoria.
 MAX_PDFS_POR_ENVIO = 15
 
 COLA_PROCESAMIENTO = ThreadPoolExecutor(max_workers=2)
+
+# Las sincronizaciones se hacen de a una
+COLA_SINCRONIZACION = ThreadPoolExecutor(max_workers=1)
 
 
 # ============================================================
@@ -411,7 +442,7 @@ def render_seccion(section, **extra):
     hay_procesando = any(
         d.get("procesamiento") == "PROCESANDO"
         for d in documentos
-    )
+    ) or bool(extra.get("hay_sincronizando"))
 
     return render_template(
         "index.html",
@@ -865,6 +896,255 @@ def procesar_documento(doc_id, ruta_pdf):
 # ============================================================
 
 # ============================================================
+# TIPIFICACIÓN AUTOMÁTICA Y SINCRONIZACIÓN
+# ============================================================
+
+def _ahora_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+CAMPOS_TIPIFICABLES = (
+    "producto", "categoria", "subcategoria", "nivel", "fuente", "descripcion"
+)
+
+
+def tipificar_documento(
+    doc_id, campos=None, sobrescribir=False, forzar_pendiente=False
+):
+    """
+    Completa con IA los datos del documento. Por defecto solo rellena lo que
+    está vacío; con sobrescribir=True vuelve a decidir todo menos el producto
+    (el producto nunca se pisa si ya tenía uno). Devuelve un mensaje de
+    error, o '' si salió bien.
+    """
+
+    campos = list(campos or CAMPOS_TIPIFICABLES)
+
+    with LOCK:
+
+        doc = next(
+            (d for d in cargar_documentos() if d.get("id") == doc_id), None
+        )
+
+    if not doc:
+        return "No se encontró el documento."
+
+    if doc.get("procesamiento") != "PROCESADO":
+        return "El documento todavía no terminó de procesarse."
+
+    try:
+
+        resultado = tipificador_service.tipificar(
+            client=client,
+            modelo=MODELO_AGENTE,
+            nombre=doc.get("nombre") or doc.get("archivo") or "",
+            ruta_origen=doc.get("ruta_origen") or "",
+            texto=armar_contenido_completo(doc),
+            productos=agent_service.PRODUCTOS,
+            simulado=MODO_SIMULADO
+        )
+
+    except ErrorTipificacion as e:
+
+        actualizar_documento(doc_id, {
+            "tipificacion": {
+                "origen": "IA", "error": str(e), "revisada": False,
+                "fecha": _ahora_iso()
+            }
+        })
+
+        return str(e)
+
+    cambios = {}
+
+    for campo in campos:
+
+        nuevo = resultado.get(campo, "")
+
+        if not nuevo:
+            continue
+
+        actual = str(doc.get(campo) or "").strip()
+
+        if campo == "producto":
+            permitido = not actual
+        else:
+            permitido = sobrescribir or not actual
+
+        if permitido:
+            cambios[campo] = nuevo
+
+    if forzar_pendiente and cambios:
+        cambios["estado"] = "Pendiente de revisión"
+
+    cambios["tipificacion"] = {
+        "origen": "IA",
+        "via": resultado.get("via", "IA"),
+        "confianza": resultado.get("confianza", ""),
+        "campos": [c for c in cambios if c in CAMPOS_TIPIFICABLES],
+        "revisada": False,
+        "error": "",
+        "fecha": _ahora_iso(),
+    }
+
+    actualizar_documento(doc_id, cambios)
+
+    return ""
+
+
+def procesar_y_tipificar(doc_id, ruta_pdf, tipificar=None):
+    """Procesa el PDF y, si se pidió, lo tipifica con IA a continuación."""
+
+    procesar_documento(doc_id, ruta_pdf)
+
+    if tipificar:
+
+        try:
+            tipificar_documento(doc_id, **tipificar)
+        except Exception as e:
+            print(f"[{doc_id}] Error tipificando: {e}")
+
+
+class SyncHost:
+    """Lo que necesita la sincronización para escribir en la Knowledge Base."""
+
+    normalizar_producto = staticmethod(agent_service.normalizar_producto)
+
+    def ruta_pdf(self, doc_id, nombre):
+        return os.path.join(DOCUMENTS_DIR, f"{doc_id[:8]}_{nombre}")
+
+    def existe(self, doc_id):
+
+        with LOCK:
+            return any(d.get("id") == doc_id for d in cargar_documentos())
+
+    def crear(self, doc_id, ruta_pdf, datos):
+
+        documento = {
+            "id": doc_id,
+            "archivo": datos["archivo"],
+            "ruta_pdf": ruta_pdf.replace("\\", "/"),
+            "nombre": datos["nombre"],
+            "producto": datos["producto"],
+            "categoria": "",
+            "subcategoria": "",
+            "nivel": "L1",
+            "estado": "Pendiente de revisión",
+            "fuente": "Otro",
+            "descripcion": "",
+            "ruta_origen": datos["ruta_origen"],
+            "origen": datos["origen"],
+            "texto_extraido": "",
+            "imagenes": [],
+            "cantidad_imagenes": 0,
+            "procesamiento": "PROCESANDO",
+            "error": ""
+        }
+
+        with LOCK:
+
+            documentos = cargar_documentos()
+            documentos.append(documento)
+            guardar_documentos(documentos)
+
+        cfg = (
+            {"sobrescribir": True, "forzar_pendiente": True}
+            if datos["tipificar_ia"] else None
+        )
+
+        COLA_PROCESAMIENTO.submit(procesar_y_tipificar, doc_id, ruta_pdf, cfg)
+
+    def actualizar(self, doc_id, ruta_pdf, datos):
+
+        with LOCK:
+
+            documentos = cargar_documentos()
+
+            doc = next((d for d in documentos if d.get("id") == doc_id), None)
+
+            if not doc:
+                return
+
+            anterior = doc.get("ruta_pdf") or ""
+
+            if anterior and anterior != ruta_pdf.replace("\\", "/") \
+                    and os.path.exists(anterior):
+                try:
+                    os.remove(anterior)
+                except OSError:
+                    pass
+
+            tip = doc.get("tipificacion") or {}
+
+            retipificar = (
+                datos["tipificar_ia"]
+                and tip.get("origen") == "IA"
+                and not tip.get("revisada")
+            )
+
+            doc.update({
+                "archivo": datos["archivo"],
+                "ruta_pdf": ruta_pdf.replace("\\", "/"),
+                "ruta_origen": datos["ruta_origen"],
+                "origen": datos["origen"],
+                "texto_extraido": "",
+                "imagenes": [],
+                "cantidad_imagenes": 0,
+                "procesamiento": "PROCESANDO",
+                "error": "",
+                "advertencia": "",
+                # El contenido cambió: vuelve a revisión
+                "estado": "Pendiente de revisión",
+            })
+
+            if not doc.get("producto") and datos["producto"]:
+                doc["producto"] = datos["producto"]
+
+            guardar_documentos(documentos)
+
+        cfg = (
+            {"sobrescribir": True, "forzar_pendiente": True}
+            if retipificar else None
+        )
+
+        COLA_PROCESAMIENTO.submit(procesar_y_tipificar, doc_id, ruta_pdf, cfg)
+
+    def archivar(self, doc_id):
+
+        actualizar_documento(doc_id, {
+            "estado": "Archivado",
+            "archivado_motivo": "Ya no está en la carpeta de origen."
+        })
+
+
+SYNC_HOST = SyncHost()
+
+
+def ejecutar_sincronizacion(conexion_id):
+
+    try:
+
+        resultado = sincronizacion_service.sincronizar(
+            conexion_id, SYNC_HOST, http=HTTP_NUBE, max_mb=SYNC_MAX_MB
+        )
+
+        if resultado.get("error"):
+            print(f"Sincronización {conexion_id}: {resultado['error']}")
+
+    except Exception as e:
+        print(f"Sincronización {conexion_id} falló: {e}")
+
+
+def encolar_sincronizacion(conexion_id):
+    COLA_SINCRONIZACION.submit(ejecutar_sincronizacion, conexion_id)
+
+
+sincronizacion_service.iniciar_programador(
+    encolar_sincronizacion, SYNC_INTERVALO_MIN
+)
+
+
+# ============================================================
 # LOGIN Y USUARIOS
 # ============================================================
 # Los usuarios se crean desde la pantalla "Usuarios" (solo administradores)
@@ -1289,7 +1569,188 @@ def knowledge():
 
 @app.route("/conexiones")
 def conexiones():
-    return render_seccion("conexiones")
+
+    return render_seccion(
+        "conexiones",
+        lista_conexiones=conexiones_service.listar(),
+        tipos_conexion=proveedores_nube.TIPOS,
+        cifrado_ok=crypto_service.disponible(),
+        sync_intervalo=SYNC_INTERVALO_MIN,
+        hay_sincronizando=conexiones_service.hay_sincronizando()
+    )
+
+
+def _datos_conexion_del_form(tipo_forzado=None):
+    """Lee y valida nombre, URL, producto y opciones. (datos, error)."""
+
+    tipo = tipo_forzado or request.form.get("tipo", "").strip()
+    nombre = request.form.get("nombre", "").strip()[:80]
+    url = request.form.get("url", "").strip()
+    producto = request.form.get("producto", "auto").strip()
+
+    if not nombre:
+        return None, "Poné un nombre para la conexión."
+
+    error = proveedores_nube.validar_url(tipo, url)
+
+    if error:
+        return None, error
+
+    if producto != "auto" and producto not in agent_service.PRODUCTOS:
+        return None, "Producto inválido."
+
+    return {
+        "tipo": tipo, "nombre": nombre, "url": url, "producto": producto,
+        "auto": request.form.get("auto") == "1",
+        "tipificar_ia": request.form.get("tipificar_ia") == "1",
+    }, ""
+
+
+@app.route("/conexiones/crear", methods=["POST"])
+@solo_admin
+def conexiones_crear():
+
+    if not crypto_service.disponible():
+
+        flash(
+            "Para guardar credenciales hace falta definir FLASK_SECRET_KEY "
+            "en Render (una clave fija)."
+        )
+
+        return redirect(url_for("conexiones"))
+
+    datos, error = _datos_conexion_del_form()
+
+    if not error:
+
+        secreto, error = proveedores_nube.secreto_desde_form(
+            datos["tipo"], request.form, request.files
+        )
+
+        if not error and not secreto:
+            error = "Cargá las credenciales de la cuenta."
+
+    if error:
+
+        flash(error)
+
+        return redirect(url_for("conexiones"))
+
+    conexiones_service.crear(
+        datos["tipo"], datos["nombre"], datos["url"], datos["producto"],
+        datos["auto"], datos["tipificar_ia"], secreto
+    )
+
+    flash("Conexión creada. Probala y después sincronizá.")
+
+    return redirect(url_for("conexiones"))
+
+
+@app.route("/conexiones/<int:conexion_id>/editar", methods=["POST"])
+@solo_admin
+def conexiones_editar(conexion_id):
+
+    actual = conexiones_service.obtener(conexion_id)
+
+    if not actual:
+
+        flash("No se encontró la conexión.")
+
+        return redirect(url_for("conexiones"))
+
+    # El tipo no se cambia al editar
+    datos, error = _datos_conexion_del_form(actual["tipo"])
+
+    secreto = None
+
+    if not error:
+
+        secreto, error = proveedores_nube.secreto_desde_form(
+            actual["tipo"], request.form, request.files
+        )
+
+        if secreto and not crypto_service.disponible():
+            error = "Falta definir FLASK_SECRET_KEY en Render."
+
+    if error:
+
+        flash(error)
+
+        return redirect(url_for("conexiones"))
+
+    conexiones_service.actualizar(
+        conexion_id, datos["nombre"], datos["url"], datos["producto"],
+        datos["auto"], datos["tipificar_ia"], secreto
+    )
+
+    flash("Conexión actualizada.")
+
+    return redirect(url_for("conexiones"))
+
+
+@app.route("/conexiones/<int:conexion_id>/probar", methods=["POST"])
+@solo_admin
+def conexiones_probar(conexion_id):
+
+    mensaje, ok = sincronizacion_service.probar(conexion_id, http=HTTP_NUBE)
+
+    flash(("✔ " if ok else "✖ ") + mensaje)
+
+    return redirect(url_for("conexiones"))
+
+
+@app.route("/conexiones/<int:conexion_id>/sincronizar", methods=["POST"])
+@solo_admin
+def conexiones_sincronizar(conexion_id):
+
+    conexion = conexiones_service.obtener(conexion_id)
+
+    if not conexion:
+        flash("No se encontró la conexión.")
+    elif not conexion["activa"]:
+        flash("La conexión está desactivada.")
+    elif conexion["sincronizando"]:
+        flash("Ya se está sincronizando.")
+    else:
+        encolar_sincronizacion(conexion_id)
+        flash(
+            "Sincronización iniciada. Los documentos nuevos van a aparecer "
+            "en la Knowledge Base como Pendientes de revisión."
+        )
+
+    return redirect(url_for("conexiones"))
+
+
+@app.route("/conexiones/<int:conexion_id>/estado", methods=["POST"])
+@solo_admin
+def conexiones_estado(conexion_id):
+
+    conexion = conexiones_service.obtener(conexion_id)
+
+    if conexion:
+
+        conexiones_service.cambiar_activa(conexion_id, not conexion["activa"])
+
+        flash(
+            "Conexión desactivada." if conexion["activa"]
+            else "Conexión activada."
+        )
+
+    return redirect(url_for("conexiones"))
+
+
+@app.route("/conexiones/<int:conexion_id>/eliminar", methods=["POST"])
+@solo_admin
+def conexiones_eliminar(conexion_id):
+
+    conexiones_service.eliminar(conexion_id)
+
+    flash(
+        "Conexión eliminada. Los documentos que ya se habían incorporado "
+        "siguen en la Knowledge Base."
+    )
+
+    return redirect(url_for("conexiones"))
 
 
 @app.route("/metricas")
@@ -1315,6 +1776,17 @@ def playground():
 # ============================================================
 # SUBIR DOCUMENTO
 # ============================================================
+
+def _es_automatico(valor):
+    """Valores que significan 'que lo complete la IA' (o que quedó sin elegir)."""
+
+    valor = (valor or "").strip().lower()
+
+    return (
+        not valor or valor == "auto" or valor.startswith("seleccionar")
+        or "automático" in valor or "automatico" in valor
+    )
+
 
 def _valor_de_lista(lista, indice, por_defecto=""):
     """
@@ -1364,6 +1836,9 @@ def knowledge_upload():
         )
     }
 
+    # Una casilla sin tildar no se envía: solo se usa la IA si vino tildada
+    usar_ia = "1" in request.form.getlist("tipificar_ia")
+
     recibidos = 0
     rechazados = []
 
@@ -1406,12 +1881,28 @@ def knowledge_upload():
         # El nombre del documento es directamente el nombre del archivo
         nombre = os.path.splitext(archivo.filename)[0].strip()
 
-        categoria = _valor_de_lista(campos["categoria"], indice)
-
-        if categoria.lower().startswith("seleccionar"):
-            categoria = ""
-
         producto = _valor_de_lista(campos["producto"], indice)
+
+        # "Automático (IA)" o sin elegir = lo completa la IA (si está activada)
+        valores = {
+            nombre_campo: _valor_de_lista(campos[nombre_campo], indice)
+            for nombre_campo in (
+                "categoria", "subcategoria", "nivel", "fuente", "descripcion"
+            )
+        }
+
+        a_completar = []
+
+        for nombre_campo, valor in valores.items():
+
+            if _es_automatico(valor):
+
+                valores[nombre_campo] = ""
+
+                if nombre_campo != "producto":
+                    a_completar.append(nombre_campo)
+
+        estado_elegido = _valor_de_lista(campos["estado"], indice)
 
         documento = {
             "id": doc_id,
@@ -1419,12 +1910,12 @@ def knowledge_upload():
             "ruta_pdf": ruta_pdf.replace("\\", "/"),
             "nombre": nombre,
             "producto": agent_service.normalizar_producto(producto, producto),
-            "categoria": categoria,
-            "subcategoria": _valor_de_lista(campos["subcategoria"], indice),
-            "nivel": _valor_de_lista(campos["nivel"], indice),
-            "estado": _valor_de_lista(campos["estado"], indice),
-            "fuente": _valor_de_lista(campos["fuente"], indice),
-            "descripcion": _valor_de_lista(campos["descripcion"], indice),
+            "categoria": valores["categoria"],
+            "subcategoria": valores["subcategoria"],
+            "nivel": valores["nivel"],
+            "estado": estado_elegido,
+            "fuente": valores["fuente"],
+            "descripcion": valores["descripcion"],
             "texto_extraido": "",
             "imagenes": [],
             "cantidad_imagenes": 0,
@@ -1439,8 +1930,20 @@ def knowledge_upload():
             guardar_documentos(documentos)
 
         # Se procesan en segundo plano, de a 2 por vez, para que la
-        # subida responda enseguida y no se corte por timeout.
-        COLA_PROCESAMIENTO.submit(procesar_documento, doc_id, ruta_pdf)
+        # subida responda enseguida y no se corte por timeout. Si la IA
+        # completa algo, el documento queda "Pendiente de revisión".
+        cfg = None
+
+        if usar_ia and a_completar:
+            cfg = {
+                "campos": a_completar,
+                "sobrescribir": False,
+                "forzar_pendiente": True
+            }
+
+        COLA_PROCESAMIENTO.submit(
+            procesar_y_tipificar, doc_id, ruta_pdf, cfg
+        )
 
         recibidos += 1
 
@@ -1449,6 +1952,11 @@ def knowledge_upload():
         flash(
             f"{recibidos} PDF recibido(s). Se están procesando el texto y "
             "las imágenes; la página se actualiza sola hasta que terminen."
+            + (
+                " Lo que dejaste en automático lo completa la IA y esos "
+                "documentos quedan Pendientes de revisión."
+                if usar_ia else ""
+            )
         )
 
     if rechazados:
@@ -1776,7 +2284,7 @@ def ucontact_mensaje():
             historial=historial,
             mensaje=mensaje,
             estado_previo=estado_previo,
-            incluir_pendientes=True,
+            incluir_pendientes=WHATSAPP_INCLUIR_PENDIENTES,
             producto=producto
         )
 
@@ -1851,6 +2359,110 @@ def ucontact_cierre():
     ucontact_service.cerrar_conversacion(sesion["conversacion_id"])
 
     return jsonify({"ok": True, "conversacion_id": sesion["conversacion_id"]})
+
+
+# ============================================================
+# EDITAR, CONFIRMAR Y TIPIFICAR DOCUMENTOS
+# ============================================================
+
+ESTADOS_DOC = ("Vigente", "Pendiente de revisión", "Archivado")
+
+
+def _marcar_revisada(doc_id, **cambios):
+
+    with LOCK:
+
+        documentos = cargar_documentos()
+
+        for doc in documentos:
+
+            if doc.get("id") != doc_id:
+                continue
+
+            tip = dict(doc.get("tipificacion") or {})
+
+            tip["revisada"] = True
+            tip["revisada_por"] = (g.usuario or {}).get("usuario", "")
+            tip["fecha_revision"] = _ahora_iso()
+
+            doc.update(cambios)
+            doc["tipificacion"] = tip
+
+            guardar_documentos(documentos)
+
+            return True
+
+    return False
+
+
+@app.route("/knowledge/documento/<doc_id>/editar", methods=["POST"])
+def knowledge_editar(doc_id):
+
+    def campo(nombre):
+        return request.form.get(nombre, "").strip()
+
+    producto = agent_service.normalizar_producto(campo("producto"), "")
+
+    categoria = campo("categoria")
+    nivel = campo("nivel")
+    estado = campo("estado")
+    fuente = campo("fuente")
+
+    if estado not in ESTADOS_DOC:
+
+        flash("Estado inválido.")
+
+        return redirect(url_for("knowledge"))
+
+    cambios = {
+        "producto": producto,
+        "categoria": categoria if categoria in tipificador_service.CATEGORIAS else "",
+        "subcategoria": campo("subcategoria")[:80],
+        "nivel": nivel if nivel in tipificador_service.NIVELES else "",
+        "estado": estado,
+        "fuente": fuente if fuente in tipificador_service.FUENTES else "",
+        "descripcion": campo("descripcion")[:600],
+    }
+
+    if _marcar_revisada(doc_id, **cambios):
+        flash("Documento actualizado.")
+    else:
+        flash("No se encontró el documento.")
+
+    return redirect(url_for("knowledge"))
+
+
+@app.route("/knowledge/documento/<doc_id>/confirmar", methods=["POST"])
+def knowledge_confirmar(doc_id):
+
+    if _marcar_revisada(doc_id, estado="Vigente"):
+        flash("Documento confirmado: ahora está Vigente.")
+    else:
+        flash("No se encontró el documento.")
+
+    return redirect(url_for("knowledge"))
+
+
+@app.route("/knowledge/documento/<doc_id>/tipificar", methods=["POST"])
+def knowledge_tipificar(doc_id):
+
+    if not client:
+
+        flash("Falta configurar la IA en el servidor.")
+
+        return redirect(url_for("knowledge"))
+
+    error = tipificar_documento(
+        doc_id, sobrescribir=True, forzar_pendiente=True
+    )
+
+    flash(
+        error or
+        "Documento tipificado con IA. Quedó Pendiente de revisión: "
+        "revisalo y confirmalo."
+    )
+
+    return redirect(url_for("knowledge"))
 
 
 # ============================================================
@@ -2050,6 +2662,9 @@ def health():
         "modelo_agente": MODELO_AGENTE,
         "ucontact_configurado": bool(UCONTACT_API_KEY),
         "login_configurado": usuarios_service.cantidad() > 0,
+        "conexiones_cifrado_ok": crypto_service.disponible(),
+        "sync_intervalo_min": SYNC_INTERVALO_MIN,
+        "whatsapp_incluye_pendientes": WHATSAPP_INCLUIR_PENDIENTES,
         "productos": agent_service.PRODUCTOS,
         "kb_en_disco_persistente": kb_en_disco_persistente(),
         "documentos_en_kb": len(cargar_documentos()),
