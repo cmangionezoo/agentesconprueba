@@ -438,9 +438,140 @@ def resolver_ruta_pdf(doc):
     return ruta
 
 
+def agrupar_kb(documentos):
+    """
+    Ordena los documentos por producto y, dentro de cada uno, por tipificación,
+    para la pantalla Knowledge Base. También arma el grupo de los documentos
+    compartidos (sin producto). Cada grupo trae sus cantidades.
+    """
+
+    def usable(doc, producto):
+        return knowledge_service.documento_elegible(doc, False, producto)
+
+    def resumen(docs, producto):
+
+        return {
+            "total": len(docs),
+            "vigentes": sum(1 for d in docs if d.get("estado") == "Vigente"),
+            "pendientes": sum(
+                1 for d in docs if d.get("estado") == "Pendiente de revisión"
+            ),
+            "usables": sum(1 for d in docs if usable(d, producto)),
+        }
+
+    por_nombre = lambda docs: sorted(
+        docs, key=lambda d: (d.get("nombre") or d.get("archivo") or "").lower()
+    )
+
+    grupos = []
+
+    conocidos = set(agent_service.PRODUCTOS)
+
+    for producto in agent_service.PRODUCTOS:
+
+        propios = [
+            d for d in documentos
+            if agent_service.normalizar_producto(d.get("producto"), "") == producto
+        ]
+
+        categorias = agentes_service.tipificaciones(producto)
+
+        claves = {knowledge_service.normalizar(c): c for c in categorias}
+
+        subgrupos = []
+
+        for categoria in categorias:
+
+            docs = [
+                d for d in propios
+                if knowledge_service.normalizar(d.get("categoria") or "")
+                == knowledge_service.normalizar(categoria)
+            ]
+
+            subgrupos.append(dict(
+                titulo=categoria, categoria=categoria, docs=por_nombre(docs),
+                **{k: v for k, v in resumen(docs, producto).items()
+                   if k in ("total", "usables")}
+            ))
+
+        # Documentos del producto sin ninguna de sus tipificaciones
+        sueltos = [
+            d for d in propios
+            if knowledge_service.normalizar(d.get("categoria") or "") not in claves
+        ]
+
+        if sueltos or not categorias:
+
+            subgrupos.append(dict(
+                titulo=(
+                    "Sin categoría válida" if categorias
+                    else "Todos los documentos (este producto todavía no tiene tipificaciones)"
+                ),
+                categoria="__sin__", docs=por_nombre(sueltos),
+                **{k: v for k, v in resumen(sueltos, producto).items()
+                   if k in ("total", "usables")}
+            ))
+
+        grupos.append(dict(
+            titulo=producto, producto=producto, grupos=subgrupos,
+            **resumen(propios, producto)
+        ))
+
+    compartidos = [d for d in documentos if not (d.get("producto") or "").strip()]
+
+    if compartidos:
+
+        grupos.append(dict(
+            titulo="Compartidos (sin producto)", producto="",
+            grupos=[dict(
+                titulo="Los usan los agentes de todos los productos",
+                categoria="__todas__", docs=por_nombre(compartidos),
+                **{k: v for k, v in resumen(compartidos, "").items()
+                   if k in ("total", "usables")}
+            )],
+            **resumen(compartidos, "")
+        ))
+
+    raros = [
+        d for d in documentos
+        if (d.get("producto") or "").strip()
+        and agent_service.normalizar_producto(d.get("producto"), "") not in conocidos
+    ]
+
+    if raros:
+
+        grupos.append(dict(
+            titulo="Producto no reconocido", producto="?",
+            grupos=[dict(
+                titulo="Revisalos con ✏ Editar y asignales un producto",
+                categoria="__todas__", docs=por_nombre(raros),
+                **{k: v for k, v in resumen(raros, "").items()
+                   if k in ("total", "usables")}
+            )],
+            **resumen(raros, "")
+        ))
+
+    return grupos
+
+
+def descripcion_modelo_ia():
+    """Texto real del proveedor y modelo que usa el agente."""
+
+    if MODO_SIMULADO:
+        return "Simulación (sin IA)"
+
+    if not client:
+        return "IA sin configurar"
+
+    return f"{'Azure OpenAI' if USA_AZURE else 'OpenAI'} · {MODELO_AGENTE}"
+
+
 def render_seccion(section, **extra):
 
     documentos = documentos_para_vista()
+
+    if section == "knowledge":
+        extra.setdefault("grupos_kb", agrupar_kb(documentos))
 
     hay_procesando = any(
         d.get("procesamiento") == "PROCESANDO"
@@ -459,6 +590,7 @@ def render_seccion(section, **extra):
             agent_service.PRODUCTOS
         ),
         max_pdfs=MAX_PDFS_POR_ENVIO,
+        modelo_ia=descripcion_modelo_ia(),
         **extra
     )
 
