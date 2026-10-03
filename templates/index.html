@@ -1,3 +1,181 @@
+{% macro fila_documento(documento) %}
+
+                            <tr class="kb-fila"
+                                data-producto="{{ documento.producto }}"
+                                data-categoria="{{ documento.categoria }}"
+                                data-nombre="{{ documento.nombre or documento.archivo }}"
+                                data-estado="{{ documento.estado }}">
+
+                                <td>
+                                    📄 {{ documento.nombre or documento.archivo }}
+
+                                    {% if documento.origen %}
+                                        <br><small>☁ {{ documento.origen.conexion }}{% if documento.origen.ruta %} · {{ documento.origen.ruta }}{% endif %}</small>
+                                    {% endif %}
+
+                                    {% if documento.procesamiento == "PROCESANDO" %}
+                                        <br><span class="tag yellow">⏳ Procesando…</span>
+                                    {% elif documento.procesamiento == "ERROR" %}
+                                        <br><span class="tag gray">⚠ Error al procesar</span>
+                                        <br><small>{{ documento.error }}</small>
+                                    {% else %}
+                                        <br><small>{{ documento.cantidad_imagenes or 0 }} imágenes analizadas{% if documento.paginas_escaneadas %} · {{ documento.paginas_escaneadas }} pág. escaneadas{% endif %}</small>
+                                        {% if documento.simulado %}
+                                            <br><span class="tag yellow">🧪 Procesado en simulación</span>
+                                        {% endif %}
+                                        {% if documento.advertencia or documento.imagenes_con_error %}
+                                            <br><span class="tag yellow">⚠ Imágenes sin analizar</span>
+                                            {% if documento.advertencia %}<br><small>{{ documento.advertencia }}</small>{% endif %}
+                                        {% endif %}
+                                    {% endif %}
+                                </td>
+
+                                <td>
+                                    {% if documento.producto %}
+                                        {{ documento.producto }}
+                                    {% else %}
+                                        <span class="muted">Todos<br><small>(compartido)</small></span>
+                                    {% endif %}
+                                </td>
+
+                                <td>
+                                    {{ documento.categoria }}
+
+                                    {% if documento.subcategoria %}
+                                        <br>
+                                        <small>{{ documento.subcategoria }}</small>
+                                    {% endif %}
+
+                                    {% set tip = documento.tipificacion or {} %}
+
+                                    {% if tip.error %}
+                                        <br><span class="tag gray" title="{{ tip.error }}">⚠ No se pudo tipificar</span>
+                                    {% elif tip.origen == "IA" and not tip.revisada %}
+                                        <br><span class="tag yellow">🤖 Tipificado por IA — revisar{% if tip.confianza %} ({{ tip.confianza }}){% endif %}</span>
+                                    {% elif tip.origen == "IA" and tip.revisada %}
+                                        <br><span class="tag green">✔ Revisado</span>
+                                    {% endif %}
+
+                                </td>
+
+                                <td>
+                                    {{ documento.nivel }}
+                                </td>
+
+                                <td>
+
+                                    {% if documento.estado == "Vigente" %}
+
+                                        <span class="tag green">
+                                            Vigente
+                                        </span>
+
+                                    {% elif documento.estado == "Pendiente de revisión" %}
+
+                                        <span class="tag yellow">
+                                            Pendiente
+                                        </span>
+
+                                    {% else %}
+
+                                        <span class="tag">
+                                            Archivado
+                                        </span>
+
+                                    {% endif %}
+
+                                </td>
+
+                                <td>
+
+                                    <div style="display:flex; gap:7px; flex-wrap:wrap;">
+
+                                        <button
+                                            class="secondary"
+                                            type="button"
+                                            {% if documento.procesamiento != "PROCESADO" %}disabled{% endif %}
+                                            onclick='verDocumento(
+                                                {{ documento.contenido_completo|tojson }},
+                                                {{ (documento.nombre or documento.archivo)|tojson }}
+                                            )'>
+                                            👁 Ver contenido
+                                        </button>
+
+                                        {% if documento.procesamiento == "ERROR" or documento.advertencia or documento.imagenes_con_error or (documento.simulado and not simulado) %}
+                                        <form action="/knowledge/reprocesar/{{ documento.id }}"
+                                              method="POST"
+                                              style="margin:0;">
+                                            <button class="secondary" type="submit">
+                                                🔄 Reprocesar
+                                            </button>
+                                        </form>
+                                        {% endif %}
+
+                                        <button
+                                            class="secondary"
+                                            type="button"
+                                            onclick='verInfoDocumento(
+                                                {{ documento.nombre|tojson }},
+                                                {{ documento.archivo|tojson }},
+                                                {{ documento.producto|tojson }},
+                                                {{ documento.categoria|tojson }},
+                                                {{ documento.subcategoria|tojson }},
+                                                {{ documento.nivel|tojson }},
+                                                {{ documento.estado|tojson }},
+                                                {{ documento.fuente|tojson }},
+                                                {{ documento.descripcion|tojson }}
+                                            )'>
+                                            Ver
+                                        </button>
+
+                                        {% set tip2 = documento.tipificacion or {} %}
+
+                                        {% if documento.procesamiento == "PROCESADO" and tip2.origen == "IA" and not tip2.revisada and not tip2.error and documento.estado == "Pendiente de revisión" %}
+                                        <form action="/knowledge/documento/{{ documento.id }}/confirmar"
+                                              method="POST"
+                                              style="margin:0;">
+                                            <button class="primary" type="submit"
+                                                    title="Confirma la tipificación y deja el documento Vigente">
+                                                ✔ Confirmar
+                                            </button>
+                                        </form>
+                                        {% endif %}
+
+                                        <button
+                                            class="secondary"
+                                            type="button"
+                                            onclick='editarDocumento(
+                                                {{ documento.id|tojson }},
+                                                {{ (documento.nombre or documento.archivo)|tojson }},
+                                                {{ documento.producto|tojson }},
+                                                {{ documento.categoria|tojson }},
+                                                {{ documento.subcategoria|tojson }},
+                                                {{ documento.nivel|tojson }},
+                                                {{ documento.estado|tojson }},
+                                                {{ documento.fuente|tojson }},
+                                                {{ documento.descripcion|tojson }}
+                                            )'>
+                                            ✏ Editar
+                                        </button>
+
+                                        {% if documento.procesamiento == "PROCESADO" %}
+                                        <form action="/knowledge/documento/{{ documento.id }}/tipificar"
+                                              method="POST"
+                                              style="margin:0;"
+                                              onsubmit="return confirm('La IA va a volver a decidir categoría, subcategoría, nivel, fuente y descripción (el estado no cambia). ¿Seguir?')">
+                                            <button class="secondary" type="submit">
+                                                🤖 Tipificar con IA
+                                            </button>
+                                        </form>
+                                        {% endif %}
+
+                                    </div>
+
+                                </td>
+
+                            </tr>
+
+                            {% endmacro %}
 <!DOCTYPE html>
 
 <html lang="es">
@@ -371,6 +549,59 @@
         color: #9ca3af;
     }
 
+
+    /* DESPLEGABLES (agentes y Knowledge Base) */
+
+    details.grupo {
+        border: 1px solid #e5e7eb;
+        border-radius: 9px;
+        margin-bottom: 10px;
+        background: white;
+    }
+
+    details.grupo > summary {
+        cursor: pointer;
+        padding: 12px 14px;
+        font-weight: bold;
+        list-style: none;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    details.grupo > summary::-webkit-details-marker {
+        display: none;
+    }
+
+    details.grupo > summary::before {
+        content: "▸";
+        color: #6b7280;
+        width: 12px;
+    }
+
+    details.grupo[open] > summary::before {
+        content: "▾";
+    }
+
+    details.grupo > .grupo-cuerpo {
+        padding: 0 14px 14px;
+    }
+
+    details.subgrupo {
+        margin-bottom: 8px;
+        background: #f9fafb;
+    }
+
+    details.subgrupo > summary {
+        font-weight: normal;
+        padding: 9px 12px;
+    }
+
+    details.subgrupo > summary .nombre {
+        font-weight: bold;
+    }
+
     /* MODAL CONTENIDO */
 
     .modal {
@@ -700,6 +931,182 @@
         {% endif %}
         {% endwith %}
 
+{% macro fila_doc(documento) %}
+<tr class="kb-fila"
+                                data-producto="{{ documento.producto }}"
+                                data-categoria="{{ documento.categoria }}"
+                                data-estado="{{ documento.estado }}">
+
+                                <td>
+                                    📄 {{ documento.nombre or documento.archivo }}
+
+                                    {% if documento.origen %}
+                                        <br><small>☁ {{ documento.origen.conexion }}{% if documento.origen.ruta %} · {{ documento.origen.ruta }}{% endif %}</small>
+                                    {% endif %}
+
+                                    {% if documento.procesamiento == "PROCESANDO" %}
+                                        <br><span class="tag yellow">⏳ Procesando…</span>
+                                    {% elif documento.procesamiento == "ERROR" %}
+                                        <br><span class="tag gray">⚠ Error al procesar</span>
+                                        <br><small>{{ documento.error }}</small>
+                                    {% else %}
+                                        <br><small>{{ documento.cantidad_imagenes or 0 }} imágenes analizadas{% if documento.paginas_escaneadas %} · {{ documento.paginas_escaneadas }} pág. escaneadas{% endif %}</small>
+                                        {% if documento.simulado %}
+                                            <br><span class="tag yellow">🧪 Procesado en simulación</span>
+                                        {% endif %}
+                                        {% if documento.advertencia or documento.imagenes_con_error %}
+                                            <br><span class="tag yellow">⚠ Imágenes sin analizar</span>
+                                            {% if documento.advertencia %}<br><small>{{ documento.advertencia }}</small>{% endif %}
+                                        {% endif %}
+                                    {% endif %}
+                                </td>
+
+                                <td>
+                                    {% if documento.producto %}
+                                        {{ documento.producto }}
+                                    {% else %}
+                                        <span class="muted">Todos<br><small>(compartido)</small></span>
+                                    {% endif %}
+                                </td>
+
+                                <td>
+                                    {{ documento.categoria }}
+
+                                    {% if documento.subcategoria %}
+                                        <br>
+                                        <small>{{ documento.subcategoria }}</small>
+                                    {% endif %}
+
+                                    {% set tip = documento.tipificacion or {} %}
+
+                                    {% if tip.error %}
+                                        <br><span class="tag gray" title="{{ tip.error }}">⚠ No se pudo tipificar</span>
+                                    {% elif tip.origen == "IA" and not tip.revisada %}
+                                        <br><span class="tag yellow">🤖 Tipificado por IA — revisar{% if tip.confianza %} ({{ tip.confianza }}){% endif %}</span>
+                                    {% elif tip.origen == "IA" and tip.revisada %}
+                                        <br><span class="tag green">✔ Revisado</span>
+                                    {% endif %}
+
+                                </td>
+
+                                <td>
+                                    {{ documento.nivel }}
+                                </td>
+
+                                <td>
+
+                                    {% if documento.estado == "Vigente" %}
+
+                                        <span class="tag green">
+                                            Vigente
+                                        </span>
+
+                                    {% elif documento.estado == "Pendiente de revisión" %}
+
+                                        <span class="tag yellow">
+                                            Pendiente
+                                        </span>
+
+                                    {% else %}
+
+                                        <span class="tag">
+                                            Archivado
+                                        </span>
+
+                                    {% endif %}
+
+                                </td>
+
+                                <td>
+
+                                    <div style="display:flex; gap:7px; flex-wrap:wrap;">
+
+                                        <button
+                                            class="secondary"
+                                            type="button"
+                                            {% if documento.procesamiento != "PROCESADO" %}disabled{% endif %}
+                                            onclick='verDocumento(
+                                                {{ documento.contenido_completo|tojson }},
+                                                {{ (documento.nombre or documento.archivo)|tojson }}
+                                            )'>
+                                            👁 Ver contenido
+                                        </button>
+
+                                        {% if documento.procesamiento == "ERROR" or documento.advertencia or documento.imagenes_con_error or (documento.simulado and not simulado) %}
+                                        <form action="/knowledge/reprocesar/{{ documento.id }}"
+                                              method="POST"
+                                              style="margin:0;">
+                                            <button class="secondary" type="submit">
+                                                🔄 Reprocesar
+                                            </button>
+                                        </form>
+                                        {% endif %}
+
+                                        <button
+                                            class="secondary"
+                                            type="button"
+                                            onclick='verInfoDocumento(
+                                                {{ documento.nombre|tojson }},
+                                                {{ documento.archivo|tojson }},
+                                                {{ documento.producto|tojson }},
+                                                {{ documento.categoria|tojson }},
+                                                {{ documento.subcategoria|tojson }},
+                                                {{ documento.nivel|tojson }},
+                                                {{ documento.estado|tojson }},
+                                                {{ documento.fuente|tojson }},
+                                                {{ documento.descripcion|tojson }}
+                                            )'>
+                                            Ver
+                                        </button>
+
+                                        {% set tip2 = documento.tipificacion or {} %}
+
+                                        {% if documento.procesamiento == "PROCESADO" and tip2.origen == "IA" and not tip2.revisada and not tip2.error and documento.estado == "Pendiente de revisión" %}
+                                        <form action="/knowledge/documento/{{ documento.id }}/confirmar"
+                                              method="POST"
+                                              style="margin:0;">
+                                            <button class="primary" type="submit"
+                                                    title="Confirma la tipificación y deja el documento Vigente">
+                                                ✔ Confirmar
+                                            </button>
+                                        </form>
+                                        {% endif %}
+
+                                        <button
+                                            class="secondary"
+                                            type="button"
+                                            onclick='editarDocumento(
+                                                {{ documento.id|tojson }},
+                                                {{ (documento.nombre or documento.archivo)|tojson }},
+                                                {{ documento.producto|tojson }},
+                                                {{ documento.categoria|tojson }},
+                                                {{ documento.subcategoria|tojson }},
+                                                {{ documento.nivel|tojson }},
+                                                {{ documento.estado|tojson }},
+                                                {{ documento.fuente|tojson }},
+                                                {{ documento.descripcion|tojson }}
+                                            )'>
+                                            ✏ Editar
+                                        </button>
+
+                                        {% if documento.procesamiento == "PROCESADO" %}
+                                        <form action="/knowledge/documento/{{ documento.id }}/tipificar"
+                                              method="POST"
+                                              style="margin:0;"
+                                              onsubmit="return confirm('La IA va a volver a decidir categoría, subcategoría, nivel, fuente y descripción (el estado no cambia). ¿Seguir?')">
+                                            <button class="secondary" type="submit">
+                                                🤖 Tipificar con IA
+                                            </button>
+                                        </form>
+                                        {% endif %}
+
+                                    </div>
+
+                                </td>
+
+                            </tr>
+{% endmacro %}
+
         {% if section == None %}
 
         <div class="card">
@@ -747,38 +1154,40 @@
 
         <div class="card">
 
-            <h2>Agente Técnico L1</h2>
+            <h2>Agentes L1</h2>
 
             <div class="tags">
 
                 {% for p in productos %}
-                <span class="tag">{{ p }}</span>
+                {% set rec = agentes|selectattr("producto", "equalto", p)|selectattr("categoria", "equalto", "")|first %}
+                <span class="tag {{ 'green' if (rec and rec.activo and not pausado) else 'yellow' }}"
+                      title="{{ 'Atiende en WhatsApp' if (rec and rec.activo and not pausado) else 'Pausado: en WhatsApp sigue con una persona' }}">
+                    {{ p }}{{ '' if (rec and rec.activo and not pausado) else ' · pausado' }}
+                </span>
                 {% endfor %}
-                {% if pausado %}
-                <span class="tag yellow">Pausado</span>
-                {% else %}
-                <span class="tag green">Activo</span>
-                {% endif %}
                 <span class="tag gray">L1</span>
                 <span class="tag gray">WhatsApp</span>
+                {% if pausado %}<span class="tag yellow">Todos pausados</span>{% endif %}
 
             </div>
 
             <p class="muted">
-                Agente especializado en soporte técnico de primer nivel
-                para Dragonfish, zNube, Lince y Pantera.
+                Un <strong>agente de recepción por producto</strong> que clasifica la consulta
+                y la pasa al <strong>agente especialista</strong> de la tipificación.
+                Hoy hay {{ agentes|length }} agentes
+                ({{ agentes|selectattr("activo")|list|length }} activos).
             </p>
 
             <div class="grid">
 
                 <div>
-                    <strong>Modelo</strong>
-                    <p class="muted">OpenAI</p>
+                    <strong>Modelo de IA</strong>
+                    <p class="muted">{{ modelo_ia }}</p>
                 </div>
 
                 <div>
                     <strong>Knowledge Base</strong>
-                    <p class="muted">Dragonfish, zNube, Lince y Pantera</p>
+                    <p class="muted">Separada por producto y tipificación</p>
                 </div>
 
                 <div>
@@ -788,7 +1197,7 @@
 
                 <div>
                     <strong>Canal</strong>
-                    <p class="muted">WhatsApp</p>
+                    <p class="muted">WhatsApp (uContact)</p>
                 </div>
 
             </div>
@@ -797,8 +1206,8 @@
             <div class="buttons">
 
                 <a class="button primary"
-                   href="/agentes/configurar">
-                    Configurar
+                   href="#agentesLista">
+                    Ver agentes
                 </a>
 
                 <a class="button secondary"
@@ -810,9 +1219,9 @@
                 <form method="POST"
                       action="/agentes/pausar"
                       style="margin:0;"
-                      onsubmit="return confirm('{{ 'El agente vuelve a atender en WhatsApp. ¿Reanudar?' if pausado else 'En WhatsApp el agente deja de responder y el flujo de uContact tiene que seguir con una persona. ¿Pausar?' }}')">
+                      onsubmit="return confirm('{{ 'Todos los agentes vuelven a atender en WhatsApp. ¿Reanudar?' if pausado else 'En WhatsApp NINGÚN agente va a responder y el flujo de uContact tiene que seguir con una persona. ¿Pausar todos?' }}')">
                     <button class="{{ 'primary' if pausado else 'danger' }}" type="submit">
-                        {{ "Reanudar" if pausado else "Pausar" }}
+                        {{ "Reanudar todos" if pausado else "Pausar todos" }}
                     </button>
                 </form>
                 {% endif %}
@@ -867,30 +1276,52 @@
                 Cada agente tiene sus propias instrucciones y sus propias métricas.
             </p>
 
-            <div style="overflow-x:auto;">
-                <table class="routing-table">
-                    <thead>
-                        <tr>
-                            <th>Agente</th>
-                            <th>Atiende</th>
-                            <th>Estado</th>
-                            <th>Documentos<br><small>(Vigentes L1)</small></th>
-                            <th>Conversaciones</th>
-                            <th>Resueltas</th>
-                            <th>Derivadas</th>
-                            <th>Pasadas a especialista</th>
-                            {% if usuario_actual and usuario_actual.rol == "admin" %}
+            <div style="display:flex; gap:8px; margin-bottom:12px;">
+                <button type="button" class="secondary" style="padding:6px 12px; font-size:12px;" onclick="desplegarTodo('agProd', true)">Expandir todo</button>
+                <button type="button" class="secondary" style="padding:6px 12px; font-size:12px;" onclick="desplegarTodo('agProd', false)">Contraer todo</button>
+            </div>
+
+            {% for p in productos %}
+            {% set de_p = agentes|selectattr("producto", "equalto", p)|list %}
+            {% set rec = de_p|selectattr("categoria", "equalto", "")|first %}
+            <details class="grupo" id="agProd{{ loop.index }}" data-persistir>
+
+                <summary>
+                    <span>{{ p }}</span>
+                    {% if rec and rec.activo %}
+                    <span class="tag green">Recepción activa</span>
+                    {% else %}
+                    <span class="tag yellow">Recepción pausada</span>
+                    {% endif %}
+                    <span class="tag gray">{{ de_p|length }} agente(s) · {{ de_p|selectattr("activo")|list|length }} activos</span>
+                    <span class="tag gray">{{ de_p|sum(attribute="total") }} conversaciones</span>
+                    {% if de_p|selectattr("categoria")|selectattr("docs", "equalto", 0)|list|length %}
+                    <span class="tag yellow">{{ de_p|selectattr("categoria")|selectattr("docs", "equalto", 0)|list|length }} sin documentos</span>
+                    {% endif %}
+                </summary>
+
+                <div class="grupo-cuerpo">
+
+                    <div style="overflow-x:auto;">
+                        <table class="routing-table">
+                            <thead>
+                                <tr>
+                                    <th>Agente</th>
+                                    <th>Atiende</th>
+                                    <th>Estado</th>
+                                    <th>Documentos<br><small>(Vigentes L1)</small></th>
+                                    <th>Conversaciones</th>
+                                    <th>Resueltas</th>
+                                    <th>Derivadas</th>
+                                    <th>Pasadas a especialista</th>
+                                    {% if usuario_actual and usuario_actual.rol == "admin" %}
                             <th>Acciones</th>
                             {% endif %}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for p in productos %}
-                        <tr>
-                            <td colspan="9" style="background:#f3f4f6; font-weight:bold;">{{ p }}</td>
-                        </tr>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for a in de_p %}
 
-                        {% for a in agentes if a.producto == p %}
                         <tr>
                             <td>
                                 <strong>{{ a.nombre }}</strong>
@@ -973,11 +1404,16 @@
                             </td>
                         </tr>
                         {% endif %}
-                        {% endfor %}
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+                        
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                </div>
+
+            </details>
+            {% endfor %}
 
         </div>
 
@@ -994,17 +1430,20 @@
             </p>
 
             {% for p in productos %}
-            <div style="margin-top:16px;">
+            {% set lista = lista_tipificaciones|selectattr("producto", "equalto", p)|list %}
 
-                <strong>{{ p }}</strong>
-                <span class="muted" style="margin-left:8px;">
-                    {{ cobertura[p].usables }} documento(s) usables por el agente
+            <details class="grupo" id="tpProd{{ loop.index }}" data-persistir style="margin-top:12px;">
+
+                <summary>
+                    <span>{{ p }}</span>
+                    <span class="tag gray">{{ lista|length }} tipificación(es)</span>
+                    <span class="tag gray">{{ cobertura[p].usables }} documento(s) usables</span>
                     {% if cobertura[p].sin_categoria_valida %}
-                    · <span class="tag yellow">{{ cobertura[p].sin_categoria_valida }} sin categoría válida</span>
+                    <span class="tag yellow">{{ cobertura[p].sin_categoria_valida }} sin categoría válida</span>
                     {% endif %}
-                </span>
+                </summary>
 
-                {% set lista = lista_tipificaciones|selectattr("producto", "equalto", p)|list %}
+                <div class="grupo-cuerpo">
 
                 {% if lista %}
 
@@ -1058,7 +1497,9 @@
                 </form>
                 {% endif %}
 
-            </div>
+                </div>
+
+            </details>
             {% endfor %}
 
             {% if usuario_actual and usuario_actual.rol == "admin" %}
@@ -1548,49 +1989,6 @@
         </div>
 
 
-        <!-- SELECTOR DE KB -->
-
-        <div class="card">
-
-            <h3>Knowledge Base seleccionada</h3>
-
-            <div class="grid">
-
-                <div>
-
-                    <label>Producto</label>
-
-                    <select>
-
-                        <option selected>Dragonfish</option>
-                        <option>zNube</option>
-                        <option>Lince</option>
-                        <option>Pantera</option>
-
-                    </select>
-
-                </div>
-
-                <div>
-
-                    <label>Estado</label>
-
-                    <select>
-
-                        <option selected>Todos</option>
-                        <option>Vigentes</option>
-                        <option>Pendientes de revisión</option>
-                        <option>Archivados</option>
-
-                    </select>
-
-                </div>
-
-            </div>
-
-        </div>
-
-
         <!-- RESUMEN -->
 
         <div class="grid-4">
@@ -1642,83 +2040,6 @@
 
                 <div class="stat-label">
                     Archivados
-                </div>
-
-            </div>
-
-        </div>
-
-
-        <!-- CATEGORÍAS -->
-
-        <div class="card">
-
-            <h2>Categorías</h2>
-
-            <p class="muted">
-                Organización de la documentación de Dragonfish, zNube, Lince y Pantera.
-            </p>
-
-
-            <div class="grid-3">
-
-                <div class="stat">
-                    <div class="stat-number">
-                        {{ documentos|selectattr("categoria", "equalto", "Facturación Electrónica")|list|length if documentos else 0 }}
-                    </div>
-                    <div class="stat-label">
-                        Facturación Electrónica
-                    </div>
-                </div>
-
-
-                <div class="stat">
-                    <div class="stat-number">
-                        {{ documentos|selectattr("categoria", "equalto", "Mantenimiento")|list|length if documentos else 0 }}
-                    </div>
-                    <div class="stat-label">
-                        Mantenimiento
-                    </div>
-                </div>
-
-
-                <div class="stat">
-                    <div class="stat-number">
-                        {{ documentos|selectattr("categoria", "equalto", "Base de Datos")|list|length if documentos else 0 }}
-                    </div>
-                    <div class="stat-label">
-                        Base de Datos
-                    </div>
-                </div>
-
-
-                <div class="stat">
-                    <div class="stat-number">
-                        {{ documentos|selectattr("categoria", "equalto", "Configuración")|list|length if documentos else 0 }}
-                    </div>
-                    <div class="stat-label">
-                        Configuración
-                    </div>
-                </div>
-
-
-                <div class="stat">
-                    <div class="stat-number">
-                        {{ documentos|selectattr("categoria", "equalto", "Ecommerce")|list|length if documentos else 0 }}
-                    </div>
-                    <div class="stat-label">
-                        Ecommerce
-                    </div>
-                </div>
-
-
-                <div class="stat">
-                    <div class="stat-number">
-                        {{ documentos|selectattr("categoria", "equalto", "Otros")|list|length if documentos else 0 }}
-                    </div>
-                    <div class="stat-label">
-                        Otros
-                    </div>
                 </div>
 
             </div>
@@ -2130,17 +2451,28 @@
 
         <!-- DOCUMENTOS -->
 
-        <div class="card">
+        <div class="card" id="kbDocumentos">
 
-            <h2>Documentos</h2>
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
 
-            <p class="muted">
-                Documentación disponible en la Knowledge Base. Cada agente usa
-                solo la de su producto (y los documentos sin producto, que son
-                compartidos); los especialistas buscan primero en su tipificación.
-            </p>
+                <div>
+                    <h2>Documentos por producto y tipificación</h2>
 
-            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px;">
+                    <p class="muted">
+                        Cada agente usa solo la documentación de su producto (y los
+                        documentos <strong>compartidos</strong>, que no tienen producto);
+                        cada especialista busca primero en su tipificación.
+                    </p>
+                </div>
+
+                <div style="display:flex; gap:8px;">
+                    <button type="button" class="secondary" style="padding:6px 12px; font-size:12px;" onclick="desplegarTodo('kb', true)">Expandir todo</button>
+                    <button type="button" class="secondary" style="padding:6px 12px; font-size:12px;" onclick="desplegarTodo('kb', false)">Contraer todo</button>
+                </div>
+
+            </div>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:6px 0 14px;">
 
                 <select id="kbFiltroProducto" onchange="kbFiltrar(true)" style="width:auto;">
                     <option value="">Todos los productos</option>
@@ -2165,230 +2497,88 @@
 
             </div>
 
+            {% if not documentos %}
+            <p class="muted" style="text-align:center; padding:14px;">
+                Todavía no hay documentos cargados. Así se van a ordenar cuando los subas.
+            </p>
+            {% endif %}
 
-            <div style="overflow-x:auto;">
+            {% for g in grupos_kb %}
+            {% set gi = loop.index %}
 
-                <table class="routing-table">
+            <details class="grupo kb-producto" id="kbProd{{ gi }}" data-persistir>
 
-                    <thead>
+                <summary>
+                    <span>{{ g.titulo }}</span>
+                    <span class="tag gray">{{ g.total }} documento(s)</span>
+                    {% if g.producto and g.producto != "?" %}
+                    <span class="tag green">{{ g.usables }} usables por el agente</span>
+                    {% endif %}
+                    {% if g.pendientes %}
+                    <span class="tag yellow">{{ g.pendientes }} pendientes de revisión</span>
+                    {% endif %}
+                </summary>
 
-                        <tr>
+                <div class="grupo-cuerpo">
 
-                            <th>Documento</th>
-                            <th>Producto</th>
-                            <th>Categoría</th>
-                            <th>Nivel</th>
-                            <th>Estado</th>
-                            <th>Acciones</th>
+                    {% for sg in g.grupos %}
 
-                        </tr>
+                    <details class="grupo subgrupo kb-categoria" id="kbCat{{ gi }}_{{ loop.index }}" data-persistir>
 
-                    </thead>
+                        <summary>
+                            <span>{{ sg.titulo }}</span>
+                            <span class="tag gray">{{ sg.total }}</span>
+                            {% if g.producto and g.producto != "?" and sg.categoria not in ("__sin__", "__todas__") and sg.usables == 0 %}
+                            <span class="tag yellow" title="El especialista de esta tipificación no tiene documentos Vigentes de nivel L1: usa los del producto completo">Sin documentos usables</span>
+                            {% endif %}
+                        </summary>
 
+                        <div class="grupo-cuerpo">
 
-                    <tbody>
+                            {% if sg.docs %}
 
-                        {% if documentos %}
+                            <div style="overflow-x:auto;">
 
-                            {% for documento in documentos %}
+                                <table class="routing-table">
 
-                            <tr class="kb-fila"
-                                data-producto="{{ documento.producto }}"
-                                data-categoria="{{ documento.categoria }}"
-                                data-estado="{{ documento.estado }}">
+                                    <thead>
+                                        <tr>
+                                            <th>Documento</th>
+                                            <th>Producto</th>
+                                            <th>Categoría</th>
+                                            <th>Nivel</th>
+                                            <th>Estado</th>
+                                            <th>Acciones</th>
+                                        </tr>
+                                    </thead>
 
-                                <td>
-                                    📄 {{ documento.nombre or documento.archivo }}
+                                    <tbody>
+                                        {% for documento in sg.docs %}
+                                        {{ fila_doc(documento) }}
+                                        {% endfor %}
+                                    </tbody>
 
-                                    {% if documento.origen %}
-                                        <br><small>☁ {{ documento.origen.conexion }}{% if documento.origen.ruta %} · {{ documento.origen.ruta }}{% endif %}</small>
-                                    {% endif %}
+                                </table>
 
-                                    {% if documento.procesamiento == "PROCESANDO" %}
-                                        <br><span class="tag yellow">⏳ Procesando…</span>
-                                    {% elif documento.procesamiento == "ERROR" %}
-                                        <br><span class="tag gray">⚠ Error al procesar</span>
-                                        <br><small>{{ documento.error }}</small>
-                                    {% else %}
-                                        <br><small>{{ documento.cantidad_imagenes or 0 }} imágenes analizadas{% if documento.paginas_escaneadas %} · {{ documento.paginas_escaneadas }} pág. escaneadas{% endif %}</small>
-                                        {% if documento.simulado %}
-                                            <br><span class="tag yellow">🧪 Procesado en simulación</span>
-                                        {% endif %}
-                                        {% if documento.advertencia or documento.imagenes_con_error %}
-                                            <br><span class="tag yellow">⚠ Imágenes sin analizar</span>
-                                            {% if documento.advertencia %}<br><small>{{ documento.advertencia }}</small>{% endif %}
-                                        {% endif %}
-                                    {% endif %}
-                                </td>
+                            </div>
 
-                                <td>
-                                    {% if documento.producto %}
-                                        {{ documento.producto }}
-                                    {% else %}
-                                        <span class="muted">Todos<br><small>(compartido)</small></span>
-                                    {% endif %}
-                                </td>
+                            {% else %}
 
-                                <td>
-                                    {{ documento.categoria }}
+                            <p class="muted" style="margin:6px 0;">Todavía no hay documentos en esta tipificación.</p>
 
-                                    {% if documento.subcategoria %}
-                                        <br>
-                                        <small>{{ documento.subcategoria }}</small>
-                                    {% endif %}
+                            {% endif %}
 
-                                    {% set tip = documento.tipificacion or {} %}
+                        </div>
 
-                                    {% if tip.error %}
-                                        <br><span class="tag gray" title="{{ tip.error }}">⚠ No se pudo tipificar</span>
-                                    {% elif tip.origen == "IA" and not tip.revisada %}
-                                        <br><span class="tag yellow">🤖 Tipificado por IA — revisar{% if tip.confianza %} ({{ tip.confianza }}){% endif %}</span>
-                                    {% elif tip.origen == "IA" and tip.revisada %}
-                                        <br><span class="tag green">✔ Revisado</span>
-                                    {% endif %}
+                    </details>
 
-                                </td>
+                    {% endfor %}
 
-                                <td>
-                                    {{ documento.nivel }}
-                                </td>
+                </div>
 
-                                <td>
+            </details>
 
-                                    {% if documento.estado == "Vigente" %}
-
-                                        <span class="tag green">
-                                            Vigente
-                                        </span>
-
-                                    {% elif documento.estado == "Pendiente de revisión" %}
-
-                                        <span class="tag yellow">
-                                            Pendiente
-                                        </span>
-
-                                    {% else %}
-
-                                        <span class="tag">
-                                            Archivado
-                                        </span>
-
-                                    {% endif %}
-
-                                </td>
-
-                                <td>
-
-                                    <div style="display:flex; gap:7px; flex-wrap:wrap;">
-
-                                        <button
-                                            class="secondary"
-                                            type="button"
-                                            {% if documento.procesamiento != "PROCESADO" %}disabled{% endif %}
-                                            onclick='verDocumento(
-                                                {{ documento.contenido_completo|tojson }},
-                                                {{ (documento.nombre or documento.archivo)|tojson }}
-                                            )'>
-                                            👁 Ver contenido
-                                        </button>
-
-                                        {% if documento.procesamiento == "ERROR" or documento.advertencia or documento.imagenes_con_error or (documento.simulado and not simulado) %}
-                                        <form action="/knowledge/reprocesar/{{ documento.id }}"
-                                              method="POST"
-                                              style="margin:0;">
-                                            <button class="secondary" type="submit">
-                                                🔄 Reprocesar
-                                            </button>
-                                        </form>
-                                        {% endif %}
-
-                                        <button
-                                            class="secondary"
-                                            type="button"
-                                            onclick='verInfoDocumento(
-                                                {{ documento.nombre|tojson }},
-                                                {{ documento.archivo|tojson }},
-                                                {{ documento.producto|tojson }},
-                                                {{ documento.categoria|tojson }},
-                                                {{ documento.subcategoria|tojson }},
-                                                {{ documento.nivel|tojson }},
-                                                {{ documento.estado|tojson }},
-                                                {{ documento.fuente|tojson }},
-                                                {{ documento.descripcion|tojson }}
-                                            )'>
-                                            Ver
-                                        </button>
-
-                                        {% set tip2 = documento.tipificacion or {} %}
-
-                                        {% if documento.procesamiento == "PROCESADO" and tip2.origen == "IA" and not tip2.revisada and not tip2.error and documento.estado == "Pendiente de revisión" %}
-                                        <form action="/knowledge/documento/{{ documento.id }}/confirmar"
-                                              method="POST"
-                                              style="margin:0;">
-                                            <button class="primary" type="submit"
-                                                    title="Confirma la tipificación y deja el documento Vigente">
-                                                ✔ Confirmar
-                                            </button>
-                                        </form>
-                                        {% endif %}
-
-                                        <button
-                                            class="secondary"
-                                            type="button"
-                                            onclick='editarDocumento(
-                                                {{ documento.id|tojson }},
-                                                {{ (documento.nombre or documento.archivo)|tojson }},
-                                                {{ documento.producto|tojson }},
-                                                {{ documento.categoria|tojson }},
-                                                {{ documento.subcategoria|tojson }},
-                                                {{ documento.nivel|tojson }},
-                                                {{ documento.estado|tojson }},
-                                                {{ documento.fuente|tojson }},
-                                                {{ documento.descripcion|tojson }}
-                                            )'>
-                                            ✏ Editar
-                                        </button>
-
-                                        {% if documento.procesamiento == "PROCESADO" %}
-                                        <form action="/knowledge/documento/{{ documento.id }}/tipificar"
-                                              method="POST"
-                                              style="margin:0;"
-                                              onsubmit="return confirm('La IA va a volver a decidir categoría, subcategoría, nivel, fuente y descripción (el estado no cambia). ¿Seguir?')">
-                                            <button class="secondary" type="submit">
-                                                🤖 Tipificar con IA
-                                            </button>
-                                        </form>
-                                        {% endif %}
-
-                                    </div>
-
-                                </td>
-
-                            </tr>
-
-                            {% endfor %}
-
-
-                        {% else %}
-
-                            <tr>
-
-                                <td colspan="6"
-                                    style="text-align:center; padding:30px; color:#6b7280;">
-
-                                    Todavía no hay documentos cargados.
-
-                                </td>
-
-                            </tr>
-
-                        {% endif %}
-
-                    </tbody>
-
-                </table>
-
-            </div>
+            {% endfor %}
 
         </div>
 
@@ -4237,7 +4427,48 @@
     // Tipificaciones de cada producto (para los desplegables de categoría)
     window.TIPIFICACIONES = {{ tipificaciones|tojson }};
 
-    // Filtros de la lista de documentos
+    // Expandir / contraer todos los desplegables con ese prefijo de id
+    function desplegarTodo(prefijo, abrir) {
+
+        document.querySelectorAll('details[id^="' + prefijo + '"]').forEach(function (d) {
+            d.open = abrir;
+        });
+    }
+
+    // Recuerda qué desplegables estaban abiertos (aunque la página se actualice sola)
+    (function () {
+
+        var CLAVE = "detallesAbiertos:" + window.location.pathname;
+
+        function leer() {
+            try { return JSON.parse(window.sessionStorage.getItem(CLAVE) || "{}"); }
+            catch (e) { return {}; }
+        }
+
+        function guardar(mapa) {
+            try { window.sessionStorage.setItem(CLAVE, JSON.stringify(mapa)); }
+            catch (e) { /* sin almacenamiento: no pasa nada */ }
+        }
+
+        document.addEventListener("DOMContentLoaded", function () {
+
+            var mapa = leer();
+
+            document.querySelectorAll("details[data-persistir]").forEach(function (d) {
+
+                if (mapa[d.id] === true) { d.open = true; }
+                else if (mapa[d.id] === false) { d.open = false; }
+
+                d.addEventListener("toggle", function () {
+                    var actual = leer();
+                    actual[d.id] = d.open;
+                    guardar(actual);
+                });
+            });
+        });
+    })();
+
+    // Filtros de la lista de documentos (producto, categoría y estado)
     function kbFiltrar(cambioProducto) {
 
         var fProducto = document.getElementById("kbFiltroProducto");
@@ -4276,6 +4507,8 @@
             });
         }
 
+        var hayFiltro = !!(fProducto.value || fCategoria.value || fEstado.value);
+
         var filas = document.querySelectorAll("tr.kb-fila");
 
         var visibles = 0;
@@ -4299,6 +4532,23 @@
             fila.style.display = ok ? "" : "none";
 
             if (ok) { visibles++; }
+        });
+
+        // Con un filtro activo, solo se muestran los grupos que tienen resultados
+        function conResultados(grupo) {
+            return Array.prototype.some.call(
+                grupo.querySelectorAll("tr.kb-fila"),
+                function (f) { return f.style.display !== "none"; }
+            );
+        }
+
+        document.querySelectorAll("details.kb-categoria, details.kb-producto").forEach(function (d) {
+
+            var hay = conResultados(d);
+
+            d.style.display = (hayFiltro && !hay) ? "none" : "";
+
+            if (hayFiltro && hay) { d.open = true; }
         });
 
         var contador = document.getElementById("kbContador");
