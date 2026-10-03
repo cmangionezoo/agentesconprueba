@@ -136,6 +136,7 @@ def init_db(ruta):
         agregar("conversaciones", "tokens_in", "INTEGER DEFAULT 0")
         agregar("conversaciones", "tokens_out", "INTEGER DEFAULT 0")
         agregar("conversaciones", "ia_fallo", "INTEGER DEFAULT 0")
+        agregar("conversaciones", "cola", "TEXT DEFAULT ''")
 
 
 # ============================================================
@@ -281,7 +282,8 @@ def guardar_turno(
                 agente_id = ?, agente_nombre = ?, reasignaciones = ?,
                 tokens_in = COALESCE(tokens_in, 0) + ?,
                 tokens_out = COALESCE(tokens_out, 0) + ?,
-                ia_fallo = MAX(COALESCE(ia_fallo, 0), ?)
+                ia_fallo = MAX(COALESCE(ia_fallo, 0), ?),
+                cola = CASE WHEN ? != '' THEN ? ELSE cola END
             WHERE id = ?
             """,
             (
@@ -310,6 +312,8 @@ def guardar_turno(
                 int((resultado.get("uso") or {}).get("entrada") or 0),
                 int((resultado.get("uso") or {}).get("salida") or 0),
                 1 if resultado.get("ia_fallo") else 0,
+                resultado.get("cola") or "",
+                resultado.get("cola") or "",
                 conversacion_id
             )
         )
@@ -374,6 +378,7 @@ def listar_conversaciones(canal=None, limite=30):
             "problema": f["problema"],
             "estado": _estado_conversacion(f),
             "destino": f["destino"],
+            "cola": f["cola"] or "",
             "mensajes": f["mensajes"],
             "votos_pos": f["votos_pos"],
             "votos_neg": f["votos_neg"],
@@ -684,9 +689,10 @@ def calcular_metricas(canal=None):
 
         motivos = varias(
             f"""
-            SELECT destino, motivo, COUNT(*) AS cantidad
+            SELECT COALESCE(NULLIF(cola, ''), '(sin campaña)') AS cola,
+                   destino, motivo, COUNT(*) AS cantidad
             FROM conversaciones {filtro} AND derivada = 1
-            GROUP BY destino, motivo
+            GROUP BY cola, destino, motivo
             ORDER BY cantidad DESC LIMIT 10
             """
         )
