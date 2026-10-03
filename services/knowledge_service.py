@@ -25,9 +25,6 @@ STOPWORDS = {
     "dice", "ningun", "ninguna", "nada", "mensaje", "ayer", "hoy",
 }
 
-# Nivel de soporte que el agente L1 puede usar como procedimiento
-NIVELES_PERMITIDOS = {"l1", "todos", ""}
-
 MARCADOR = re.compile(
     r"(?=\n?--- PÁGINA \d+ ---)"
     r"|(?=\n\[(?:Imagen|Página escaneada) - página \d+)"
@@ -112,11 +109,6 @@ def documento_elegible(doc, incluir_pendientes, producto):
         # Pendiente de revisión: solo si se pidió explícitamente (pruebas)
         if not (incluir_pendientes and estado == "Pendiente de revisión"):
             return False
-
-    nivel = normalizar(doc.get("nivel") or "")
-
-    if nivel not in NIVELES_PERMITIDOS:
-        return False
 
     if producto:
 
@@ -317,7 +309,6 @@ def buscar_fragmentos(
             "documento": doc.get("nombre") or doc.get("archivo"),
             "categoria": doc.get("categoria") or "",
             "subcategoria": doc.get("subcategoria") or "",
-            "nivel": doc.get("nivel") or "",
             "estado": doc.get("estado") or "",
             "pagina": c["pagina"],
             "texto": c["texto"],
