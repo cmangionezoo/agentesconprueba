@@ -15,6 +15,7 @@ Este módulo:
 
 import json
 import os
+import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -24,18 +25,26 @@ from services import conversation_service
 
 _LOCK = threading.RLock()
 
-# Colas por defecto: si no se configura nada, la cola se llama igual que el
-# destino. Se pueden definir desde Render con UCONTACT_COLAS (JSON), por
-# ejemplo:
-# {"Dragonfish": {"L2": "Dragonfish - L2", "Ecommerce": "Dragonfish - Ecommerce",
-#                 "Desarrollo": "Dragonfish - Desarrollo", "MDA": "Dragonfish - MDA"},
-#  "default": {"L2": "Soporte L2"}}
+# Respaldo opcional por variable de entorno UCONTACT_COLAS (JSON). Solo se usa
+# para lo que NO esté cargado en la pantalla Agentes > Campañas de derivación:
+# {"Dragonfish": {"L2": "DF_L2"}, "default": {"MDA": "SOPORTE"}}
 try:
     COLAS = json.loads(os.environ.get("UCONTACT_COLAS", "") or "{}")
     if not isinstance(COLAS, dict):
         COLAS = {}
 except ValueError:
     COLAS = {}
+
+# Campañas de uContact a las que se deriva cada producto (se pueden cambiar
+# desde la pantalla). zNube comparte la campaña de Dragonfish. Pantera todavía
+# no tiene campaña.
+CAMPANIAS_INICIALES = {
+    "Dragonfish": "DF_CONSULTAS",
+    "zNube": "DF_CONSULTAS",
+    "Lince": "LI_CONSULTAS",
+}
+
+PATRON_CAMPANIA = re.compile(r"^[A-Za-z0-9_.\- ]{1,60}$")
 
 
 def _ahora():
@@ -65,6 +74,13 @@ def init_tablas():
 
         CREATE INDEX IF NOT EXISTS idx_ucontact_ext
             ON ucontact_sesiones (external_id, id);
+
+        CREATE TABLE IF NOT EXISTS colas_derivacion (
+            producto TEXT NOT NULL,
+            destino TEXT NOT NULL DEFAULT '',
+            campania TEXT NOT NULL,
+            PRIMARY KEY (producto, destino)
+        );
 
         CREATE TABLE IF NOT EXISTS ucontact_mensajes (
             external_id TEXT NOT NULL,
@@ -197,14 +213,109 @@ def guardar_respuesta(external_id, message_id, respuesta):
 
 
 # ============================================================
-# COLAS DE DERIVACIÓN
+# CAMPAÑAS DE DERIVACIÓN
 # ============================================================
+# Cada producto deriva a una campaña de uContact (por ejemplo DF_CONSULTAS).
+# Hay una campaña "por defecto" del producto (destino vacío) y, si hace falta,
+# una distinta por destino del agente (L2, Ecommerce, Desarrollo, MDA).
+
+def sembrar_campanias():
+    """Carga las campañas iniciales una sola vez (después se editan en pantalla)."""
+
+    if conversation_service.obtener_ajuste("campanias_sembradas_v1", "") == "1":
+        return
+
+    with _LOCK, _conectar() as db:
+
+        for producto, campania in CAMPANIAS_INICIALES.items():
+            db.execute(
+                "INSERT OR IGNORE INTO colas_derivacion (producto, destino, campania) "
+                "VALUES (?, '', ?)", (producto, campania)
+            )
+
+    conversation_service.guardar_ajuste("campanias_sembradas_v1", "1")
+
+
+def campanias():
+    """{producto: {"defecto": str, "destinos": {destino: campaña}}} de lo cargado."""
+
+    datos = {}
+
+    with _conectar() as db:
+
+        for f in db.execute("SELECT producto, destino, campania FROM colas_derivacion"):
+
+            d = datos.setdefault(f["producto"], {"defecto": "", "destinos": {}})
+
+            if f["destino"]:
+                d["destinos"][f["destino"]] = f["campania"]
+            else:
+                d["defecto"] = f["campania"]
+
+    return datos
+
+
+def guardar_campanias(producto, defecto, por_destino, productos, destinos_validos):
+    """Guarda las campañas de un producto. Devuelve un mensaje de error, o ''."""
+
+    if producto not in productos:
+        return "Producto inválido."
+
+    defecto = (defecto or "").strip()
+
+    limpio = {}
+
+    for destino, valor in (por_destino or {}).items():
+
+        valor = (valor or "").strip()
+
+        if valor and destino in destinos_validos:
+            limpio[destino] = valor
+
+    for nombre in [defecto, *limpio.values()]:
+
+        if nombre and not PATRON_CAMPANIA.match(nombre):
+            return (
+                f"El nombre de campaña «{nombre[:40]}» no es válido: usá letras, "
+                "números, guion, guion bajo o punto."
+            )
+
+    with _LOCK, _conectar() as db:
+
+        db.execute("DELETE FROM colas_derivacion WHERE producto = ?", (producto,))
+
+        if defecto:
+            db.execute(
+                "INSERT INTO colas_derivacion (producto, destino, campania) VALUES (?, '', ?)",
+                (producto, defecto)
+            )
+
+        for destino, valor in limpio.items():
+            db.execute(
+                "INSERT INTO colas_derivacion (producto, destino, campania) VALUES (?, ?, ?)",
+                (producto, destino, valor)
+            )
+
+    return ""
+
 
 def resolver_cola(producto, destino):
-    """Nombre de la cola de WhatsApp a la que uContact debe transferir."""
+    """
+    Campaña de uContact a la que hay que transferir. Orden: la del destino en
+    ese producto, la del producto, y por último el respaldo UCONTACT_COLAS.
+    Devuelve '' si el producto no tiene campaña (por ejemplo, Pantera hoy).
+    """
 
     if not destino:
         return ""
+
+    cargadas = campanias().get(producto, {})
+
+    if cargadas.get("destinos", {}).get(destino):
+        return cargadas["destinos"][destino]
+
+    if cargadas.get("defecto"):
+        return cargadas["defecto"]
 
     for clave in (producto, "default"):
 
@@ -213,4 +324,4 @@ def resolver_cola(producto, destino):
         if cola:
             return str(cola)
 
-    return destino
+    return ""
