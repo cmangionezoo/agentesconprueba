@@ -12,7 +12,7 @@ import threading
 import time
 import secrets
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import (
     send_file,
@@ -39,7 +39,9 @@ from services import (
     agent_service, conversation_service, ucontact_service, usuarios_service,
     conexiones_service, crypto_service, proveedores_nube,
     sincronizacion_service, tipificador_service,
-    agentes_service, enrutador_service, knowledge_service
+    agentes_service, enrutador_service, knowledge_service,
+    embeddings_service, adjuntos_service, alertas_service, reportes_service,
+    valoraciones_service, auditoria_service
 )
 from services.tipificador_service import ErrorTipificacion
 from services.mock_client import MockClient
@@ -108,6 +110,14 @@ usuarios_service.init_tablas()
 conexiones_service.init_tablas()
 
 agentes_service.init_tablas(agent_service.PRODUCTOS)
+
+auditoria_service.init_tablas()
+
+alertas_service.init_tablas()
+
+reportes_service.init_tablas()
+
+embeddings_service.init_tablas()
 
 # Administrador inicial (se define en Render con ADMIN_USUARIO y ADMIN_CLAVE)
 _resultado_admin = usuarios_service.asegurar_admin(
@@ -208,6 +218,12 @@ COLA_SINCRONIZACION = ThreadPoolExecutor(max_workers=1)
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
+# Si OpenAI tarda más que esto, se corta y el caso se deriva a una persona
+try:
+    OPENAI_TIMEOUT = float(os.environ.get("OPENAI_TIMEOUT_SEG", "25"))
+except ValueError:
+    OPENAI_TIMEOUT = 25.0
+
 if MODO_SIMULADO:
 
     client = MockClient()
@@ -217,12 +233,14 @@ elif USA_AZURE:
     client = AzureOpenAI(
         api_key=AZURE_API_KEY,
         azure_endpoint=AZURE_ENDPOINT,
-        api_version=AZURE_API_VERSION
+        api_version=AZURE_API_VERSION,
+        timeout=OPENAI_TIMEOUT,
+        max_retries=1
     )
 
 elif OPENAI_API_KEY:
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    client = OpenAI(api_key=OPENAI_API_KEY, timeout=OPENAI_TIMEOUT, max_retries=1)
 
 else:
 
@@ -572,6 +590,7 @@ def render_seccion(section, **extra):
 
     if section == "knowledge":
         extra.setdefault("grupos_kb", agrupar_kb(documentos))
+        extra.setdefault("semantico", estado_semantico())
 
     hay_procesando = any(
         d.get("procesamiento") == "PROCESANDO"
@@ -1034,6 +1053,223 @@ def procesar_documento(doc_id, ruta_pdf):
 # ============================================================
 
 # ============================================================
+# CONFIGURACIÓN EXTRA: modelos, resiliencia y alertas
+# ============================================================
+
+if USA_AZURE:
+
+    MODELO_TRANSCRIPCION = os.environ.get("AZURE_OPENAI_TRANSCRIBE_DEPLOYMENT", "").strip()
+    MODELO_EMBEDDINGS = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "").strip()
+
+else:
+
+    MODELO_TRANSCRIPCION = os.environ.get("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
+    MODELO_EMBEDDINGS = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+
+try:
+    EMBEDDINGS_DIM = int(os.environ.get("EMBEDDINGS_DIM", "512"))
+except ValueError:
+    EMBEDDINGS_DIM = 512
+
+# Capturas de los manuales en las respuestas (uContact tiene que poder enviarlas)
+ENVIAR_CAPTURAS = os.environ.get("ENVIAR_CAPTURAS", "1").strip().lower() not in ("0", "no", "false")
+
+# A dónde se deriva un caso cuando la IA no está disponible
+FALLA_IA_DESTINO = os.environ.get("FALLA_IA_DESTINO", "MDA").strip() or "MDA"
+
+MENSAJE_FALLA_IA = (
+    "Tuvimos un inconveniente técnico y no pude seguir con tu consulta. "
+    "Ya te paso con una persona del equipo de soporte, que va a tener todo "
+    "lo que me contaste."
+)
+
+try:
+    GASTO_DIARIO_MAX_USD = float(os.environ.get("GASTO_DIARIO_MAX_USD", "0"))
+except ValueError:
+    GASTO_DIARIO_MAX_USD = 0.0
+
+# Si se supera el tope, además de avisar, el agente deja de responder hasta mañana
+GASTO_DIARIO_CORTAR = os.environ.get("GASTO_DIARIO_CORTAR", "").strip().lower() in ("1", "si", "sí", "true", "yes")
+
+EXPORT_API_KEY = os.environ.get("EXPORT_API_KEY", "").strip()
+
+# Estado del "circuito" de la IA: tras varias fallas seguidas se deja de
+# intentar un rato y se deriva directo (así el cliente no espera timeouts).
+_IA = {"fallos": 0, "abierto_hasta": 0.0, "ultimo_error": ""}
+
+FALLOS_PARA_CORTAR = 3
+PAUSA_CIRCUITO_SEG = 120
+
+
+def clasificar_error_ia(e):
+    """(código, explicación) de un error de OpenAI, para el aviso a TI."""
+
+    t = f"{type(e).__name__} {e}".lower()
+
+    if "insufficient_quota" in t or "billing" in t or "exceeded your current quota" in t:
+        return "sin_credito", "OpenAI sin crédito o sin cuota"
+
+    if "401" in t or "invalid_api_key" in t or "incorrect api key" in t or "authentication" in t:
+        return "clave", "Clave de OpenAI inválida o vencida"
+
+    if "timeout" in t or "timed out" in t:
+        return "timeout", "OpenAI no responde a tiempo (timeout)"
+
+    if "429" in t or "rate limit" in t or "ratelimit" in t:
+        return "limite", "OpenAI limitó el uso (demasiadas consultas)"
+
+    if any(x in t for x in ("500", "502", "503", "504", "overloaded", "connection", "unavailable")):
+        return "caido", "OpenAI no está disponible (error del servicio o de conexión)"
+
+    return "otro", "Error al consultar a la IA"
+
+
+def ia_disponible():
+    return time.time() >= _IA["abierto_hasta"]
+
+
+def ia_exito():
+    _IA["fallos"] = 0
+
+
+def ia_fallo(e):
+    """Registra una falla; a la tercera seguida corta el circuito y avisa a TI."""
+
+    codigo, explicacion = clasificar_error_ia(e)
+
+    _IA["fallos"] += 1
+    _IA["ultimo_error"] = explicacion
+
+    if _IA["fallos"] >= FALLOS_PARA_CORTAR or codigo in ("sin_credito", "clave"):
+        _IA["abierto_hasta"] = time.time() + PAUSA_CIRCUITO_SEG
+
+    # No se incluye el texto crudo del error (puede traer datos de la cuenta)
+    alertas_service.notificar(
+        "ia", f"ia:{codigo}", f"Falla de la IA: {explicacion}",
+        f"Los casos de WhatsApp se están derivando a una persona ({FALLA_IA_DESTINO}) "
+        f"hasta que se solucione. Fallas seguidas: {_IA['fallos']}.",
+        enfriamiento=30
+    )
+
+    return codigo, explicacion
+
+
+def gasto_hoy_usd():
+
+    return reportes_service.metricas_avanzadas(dias=1, canal=None)["costo_usd"]
+
+
+def limite_de_gasto_superado():
+    """True si hay tope diario, se superó y está configurado cortar el servicio."""
+
+    if GASTO_DIARIO_MAX_USD <= 0:
+        return False
+
+    gasto = gasto_hoy_usd()
+
+    if gasto < GASTO_DIARIO_MAX_USD:
+        return False
+
+    alertas_service.notificar(
+        "gasto", f"gasto:{datetime.now(timezone(timedelta(hours=-3))).strftime('%Y-%m-%d')}",
+        f"Se superó el tope de gasto diario de IA (USD {GASTO_DIARIO_MAX_USD})",
+        f"Gasto estimado de hoy: USD {gasto:.2f}."
+        + (" El agente deja de responder hasta mañana y los casos se derivan a una persona."
+           if GASTO_DIARIO_CORTAR else ""),
+        enfriamiento=24 * 60
+    )
+
+    return GASTO_DIARIO_CORTAR
+
+
+# ---------------- búsqueda semántica ----------------
+
+def crear_embedder():
+
+    if MODO_SIMULADO:
+        return embeddings_service.Embedder(None, "simulado", simulado=True)
+
+    if not client or not MODELO_EMBEDDINGS:
+        return None
+
+    return embeddings_service.Embedder(client, MODELO_EMBEDDINGS, dimensiones=EMBEDDINGS_DIM)
+
+
+EMBEDDER = crear_embedder()
+
+
+def semantico_para(consulta, documentos, producto):
+    """Devuelve la función de similitud por significado para esta consulta, o None."""
+
+    if EMBEDDER is None:
+        return None
+
+    ids = [
+        d.get("id") for d in documentos
+        if knowledge_service.documento_elegible(d, True, producto)
+    ]
+
+    return embeddings_service.crear_similitud(EMBEDDER, consulta, ids)
+
+
+def indexar_documento_id(doc_id):
+    """Calcula los vectores de un documento ya procesado (en segundo plano)."""
+
+    if EMBEDDER is None:
+        return
+
+    try:
+
+        with LOCK:
+            doc = next((d for d in cargar_documentos() if d.get("id") == doc_id), None)
+
+        if doc and doc.get("procesamiento") == "PROCESADO":
+            embeddings_service.indexar_documento(doc, EMBEDDER, armar_contenido_completo(doc))
+
+    except Exception as e:
+        print(f"[{doc_id}] No se pudo indexar para la búsqueda semántica: {e}")
+
+
+def indexar_faltantes():
+
+    if EMBEDDER is None:
+        return 0
+
+    with LOCK:
+        documentos = cargar_documentos()
+
+    return embeddings_service.indexar_todo(documentos, EMBEDDER, armar_contenido_completo)
+
+
+def estado_semantico():
+    """Datos para mostrar en la Knowledge Base."""
+
+    if EMBEDDER is None:
+
+        return {
+            "activa": False,
+            "motivo": (
+                "Falta el modelo de embeddings: en Azure, definí "
+                "AZURE_OPENAI_EMBEDDING_DEPLOYMENT." if USA_AZURE
+                else "Falta configurar la IA (OPENAI_API_KEY)."
+            ),
+            "indexados": 0, "total": 0, "modelo": "",
+        }
+
+    indexados, total = embeddings_service.estado(cargar_documentos(), armar_contenido_completo)
+
+    return {
+        "activa": True,
+        "motivo": "Modo simulación (aproximado por palabras)" if MODO_SIMULADO else "",
+        "indexados": indexados, "total": total, "modelo": EMBEDDER.modelo,
+    }
+
+
+if os.environ.get("EMBEDDINGS_AUTOINDEX", "1").strip() not in ("0", "no", "false"):
+    threading.Timer(25, indexar_faltantes).start()
+
+
+# ============================================================
 # ATENCIÓN CON AGENTES POR PRODUCTO Y TIPIFICACIÓN
 # ============================================================
 
@@ -1062,7 +1298,8 @@ def atender_con_agentes(
             estado_previo=estado,
             incluir_pendientes=incluir_pendientes,
             producto=producto,
-            agente=contexto_agente
+            agente=contexto_agente,
+            semantico=semantico_para
         )
 
     return enrutador_service.atender(
@@ -1127,6 +1364,40 @@ def cobertura_kb():
     return resultado
 
 
+def resultado_por_falla_ia(producto, mensaje, motivo):
+    """
+    Resultado equivalente al de un agente que deriva, para cuando la IA no
+    está disponible: el cliente recibe un aviso claro y el caso pasa a la cola
+    de personas (FALLA_IA_DESTINO) con lo que escribió.
+    """
+
+    estado = agent_service.estado_inicial(producto)
+
+    estado["etapa"] = "Derivado"
+    estado["resultado"] = "Derivado"
+    estado["problema_informado"] = mensaje[:200]
+    estado["derivacion"] = {
+        "derivar": True,
+        "destino": FALLA_IA_DESTINO,
+        "motivo": f"IA no disponible: {motivo}",
+    }
+
+    return {
+        "respuesta": MENSAJE_FALLA_IA,
+        "estado": estado,
+        "resumen_tecnico": {
+            "problema": mensaje[:300],
+            "motivo_derivacion": f"La IA no estaba disponible ({motivo}). "
+                                 "El cliente no recibió ninguna orientación del agente.",
+        },
+        "fragmentos": [], "fragmentos_usados": [], "avisos": [],
+        "alcance_kb": "", "uso": {"entrada": 0, "salida": 0},
+        "agente": {"id": 0, "nombre": "(IA no disponible)", "categoria": ""},
+        "agente_inicial": 0, "reasignaciones": 0, "ruta": [],
+        "ia_fallo": True,
+    }
+
+
 def agentes_con_metricas():
     """Lista de agentes con sus números, para la pantalla Agentes."""
 
@@ -1139,6 +1410,8 @@ def agentes_con_metricas():
 
     cobertura = cobertura_kb()
 
+    valoraciones = valoraciones_service.por_agente()
+
     lista = []
 
     for agente in agentes_service.listar():
@@ -1150,7 +1423,16 @@ def agentes_con_metricas():
             if agente["categoria"] else datos.get("usables", 0)
         )
 
-        lista.append(dict(agente, docs=docs, **numeros.get(agente["id"], vacio)))
+        votos = valoraciones.get(agente["id"], {"positivos": 0, "negativos": 0})
+
+        lista.append(dict(
+            agente, docs=docs, votos_pos=votos["positivos"], votos_neg=votos["negativos"],
+            correcciones=(
+                valoraciones_service.correcciones(agente["id"], 5)
+                if votos["negativos"] else []
+            ),
+            **numeros.get(agente["id"], vacio)
+        ))
 
     return lista
 
@@ -1322,6 +1604,8 @@ def procesar_y_tipificar(doc_id, ruta_pdf, tipificar=None):
 
     procesar_documento(doc_id, ruta_pdf)
 
+    indexar_documento_id(doc_id)
+
     if tipificar:
 
         try:
@@ -1479,6 +1763,8 @@ def encolar_sincronizacion(conexion_id):
     COLA_SINCRONIZACION.submit(ejecutar_sincronizacion, conexion_id)
 
 
+reportes_service.iniciar_programador()
+
 sincronizacion_service.iniciar_programador(
     encolar_sincronizacion, SYNC_INTERVALO_MIN
 )
@@ -1498,9 +1784,9 @@ AUTH_DESACTIVADA = os.environ.get("AUTH_DESACTIVADA", "").strip().lower() in (
 
 # Rutas que no piden sesión: el login mismo, los archivos estáticos y /health.
 # El webhook de uContact se protege con su propia clave UCONTACT_API_KEY.
-RUTAS_PUBLICAS = ("login", "static", "health")
+RUTAS_PUBLICAS = ("login", "static", "health", "media")
 
-PREFIJOS_PUBLICOS = ("/api/ucontact/",)
+PREFIJOS_PUBLICOS = ("/api/ucontact/", "/api/exportar/")
 
 # Anti fuerza bruta: 5 intentos fallidos por IP = 5 minutos bloqueado
 _INTENTOS = {}
@@ -1590,6 +1876,33 @@ def _iniciar_sesion(fila):
     session.permanent = True
 
 
+# Un analista solo mira: lo único que puede enviar es salir, cambiar su
+# propia contraseña y valorar conversaciones.
+ANALISTA_PUEDE = ("logout", "cuenta_clave", "valoraciones_votar")
+
+
+def _bloqueo_solo_lectura():
+
+    usuario = getattr(g, "usuario", None)
+
+    if (
+        not usuario or usuario.get("rol") != "analista"
+        or request.method in ("GET", "HEAD", "OPTIONS")
+        or request.endpoint in ANALISTA_PUEDE
+    ):
+        return None
+
+    if request.path.startswith("/playground/chat"):
+
+        return jsonify({"error": "Tu usuario es de solo lectura."}), 403
+
+    g.sin_efecto = True
+
+    flash("Tu usuario es de solo lectura: podés ver todo, pero no modificar.")
+
+    return redirect(request.referrer or url_for("home"))
+
+
 @app.before_request
 def exigir_login():
 
@@ -1611,7 +1924,7 @@ def exigir_login():
         return None
 
     if g.usuario:
-        return None
+        return _bloqueo_solo_lectura()
 
     # Llamadas de la página (fetch): se responde JSON, no una redirección
     if request.path.startswith("/playground/chat"):
@@ -1626,7 +1939,97 @@ def exigir_login():
 @app.context_processor
 def datos_de_sesion():
 
-    return {"usuario_actual": getattr(g, "usuario", None)}
+    usuario = getattr(g, "usuario", None)
+
+    return {
+        "usuario_actual": usuario,
+        "puede_editar": bool(usuario and usuario.get("rol") in ("admin", "usuario")),
+    }
+
+
+ACCIONES_AUDITADAS = {
+    "usuarios_crear": "Creó un usuario",
+    "usuarios_clave": "Restableció la contraseña de un usuario",
+    "usuarios_estado": "Activó / desactivó un usuario",
+    "usuarios_rol": "Cambió el rol de un usuario",
+    "usuarios_eliminar": "Eliminó un usuario",
+    "cuenta_clave": "Cambió su propia contraseña",
+    "agentes_editar": "Editó un agente",
+    "agentes_estado": "Pausó / activó un agente",
+    "agentes_pausar": "Pausó / reanudó a todos los agentes",
+    "tipificaciones_crear": "Agregó una tipificación",
+    "tipificaciones_renombrar": "Renombró una tipificación",
+    "tipificaciones_eliminar": "Eliminó una tipificación",
+    "tipificaciones_retipificar": "Re-tipificó documentos con IA",
+    "conexiones_crear": "Creó una conexión",
+    "conexiones_editar": "Editó una conexión",
+    "conexiones_estado": "Activó / desactivó una conexión",
+    "conexiones_eliminar": "Eliminó una conexión",
+    "conexiones_sincronizar": "Sincronizó una conexión",
+    "conexiones_publicar": "Pasó pendientes a Vigente",
+    "knowledge_upload": "Subió documentos",
+    "knowledge_editar": "Editó un documento",
+    "knowledge_confirmar": "Confirmó un documento",
+    "knowledge_tipificar": "Tipificó un documento con IA",
+    "knowledge_reprocesar": "Reprocesó un documento",
+    "knowledge_restore": "Restauró una copia de seguridad",
+    "reportes_generar": "Generó un reporte",
+    "embeddings_indexar": "Indexó la búsqueda semántica",
+}
+
+_CAMPOS_SECRETOS = ("clave", "secret", "json", "api_key", "password", "token", "assertion")
+
+
+def _detalle_auditoria():
+    """Resumen de lo que se envió, sin contraseñas ni credenciales."""
+
+    partes = [f"{k}={v}" for k, v in (request.view_args or {}).items()]
+
+    for campo in request.form:
+
+        if any(s in campo.lower() for s in _CAMPOS_SECRETOS):
+            continue
+
+        valor = " ".join(request.form.get(campo, "").split())
+
+        if valor:
+            partes.append(f"{campo}={valor[:70]}")
+
+    archivos = [f.filename for f in request.files.getlist("archivo") if f and f.filename]
+
+    if archivos:
+        partes.append("archivos=" + ", ".join(archivos[:5]))
+
+    return "; ".join(partes)
+
+
+@app.after_request
+def auditar(respuesta):
+
+    usuario = getattr(g, "usuario", None)
+
+    if (
+        request.method == "POST" and usuario and usuario.get("id")
+        and request.endpoint in ACCIONES_AUDITADAS and respuesta.status_code < 400
+        and not getattr(g, "sin_efecto", False)
+    ):
+
+        # Lo que la aplicación le contestó al usuario ("Usuario creado.",
+        # "Ya existe el usuario...") dice si la acción se hizo o fue rechazada.
+        avisos = session.get("_flashes") or []
+
+        resultado = f"HTTP {respuesta.status_code}"
+
+        if avisos:
+            resultado += " · " + " ".join(str(avisos[-1][1]).split())[:90]
+
+        auditoria_service.registrar(
+            usuario["usuario"], usuario["rol"],
+            ACCIONES_AUDITADAS[request.endpoint], _detalle_auditoria(),
+            _ip_cliente(), resultado
+        )
+
+    return respuesta
 
 
 @app.after_request
@@ -1650,6 +2053,8 @@ def solo_admin(vista):
         usuario = getattr(g, "usuario", None)
 
         if not usuario or usuario["rol"] != "admin":
+
+            g.sin_efecto = True
 
             flash("Esta sección es solo para administradores.")
 
@@ -1701,6 +2106,10 @@ def login():
 
         _registrar_fallo(ip)
 
+        auditoria_service.registrar(
+            request.form.get("usuario", "")[:60], "", "Intento de ingreso fallido", "", ip, "rechazado"
+        )
+
         return render_template(
             "login.html",
             error="Usuario o contraseña incorrectos.",
@@ -1710,6 +2119,8 @@ def login():
     _INTENTOS.pop(ip, None)
 
     _iniciar_sesion(fila)
+
+    auditoria_service.registrar(fila["usuario"], fila["rol"], "Ingresó", "", ip, "ok")
 
     return redirect(destino)
 
@@ -2426,7 +2837,437 @@ def metricas():
         None if canal == "todos" else canal
     )
 
-    return render_seccion("metricas", m=datos, canal=canal)
+    try:
+        dias = min(90, max(7, int(request.args.get("dias", 30))))
+    except ValueError:
+        dias = 30
+
+    canal_f = None if canal == "todos" else canal
+
+    avanzadas = reportes_service.metricas_avanzadas(dias, canal_f)
+
+    return render_seccion(
+        "metricas", m=datos, canal=canal, dias=dias,
+        avanzadas=avanzadas,
+        grafico_dias=grafico_barras_diarias(reportes_service.serie_diaria(dias, canal_f)),
+        grafico_productos=grafico_barras_productos(avanzadas["por_producto"]),
+        brechas=reportes_service.brechas(dias, canal_f),
+        alertas=alertas_service.listar(15),
+        canales_alerta=alertas_service.canales(),
+        umbral_alerta=alertas_service.umbral(),
+        ventana_alerta=alertas_service.ventana_min(),
+        reportes=reportes_service.listar_reportes(8),
+        votos=valoraciones_service.totales(),
+        precios_ia=reportes_service.precios(),
+    )
+
+
+def grafico_barras_diarias(serie):
+    """Gráfico de barras apiladas por día (SVG): resueltas, derivadas, en curso."""
+
+    from markupsafe import Markup, escape
+
+    ancho, alto, margen = 760, 230, 34
+
+    maximo = max([d["total"] for d in serie] + [1])
+
+    paso = (ancho - margen - 8) / max(len(serie), 1)
+
+    barra = max(2.0, paso * 0.72)
+
+    partes = [f'<svg viewBox="0 0 {ancho} {alto}" width="100%" role="img" aria-label="Consultas por día">']
+
+    for fraccion in (0, 0.5, 1):
+
+        y = alto - 30 - (alto - 60) * fraccion
+
+        partes.append(f'<line x1="{margen}" y1="{y:.1f}" x2="{ancho - 8}" y2="{y:.1f}" stroke="#e5e7eb"/>')
+        partes.append(f'<text x="{margen - 6}" y="{y + 4:.1f}" font-size="10" text-anchor="end" fill="#6b7280">{round(maximo * fraccion)}</text>')
+
+    for i, d in enumerate(serie):
+
+        x = margen + i * paso + (paso - barra) / 2
+
+        y_base = alto - 30
+
+        titulo = (f'{d["dia"]}: {d["total"]} consultas ({d["resueltas"]} resueltas por IA, '
+                  f'{d["derivadas"]} derivadas, {d["en_curso"]} en curso)')
+
+        for cantidad, color in ((d["resueltas"], "#16a34a"), (d["derivadas"], "#f59e0b"), (d["en_curso"], "#9ca3af")):
+
+            if not cantidad:
+                continue
+
+            h = (alto - 60) * cantidad / maximo
+
+            y_base -= h
+
+            partes.append(
+                f'<rect x="{x:.1f}" y="{y_base:.1f}" width="{barra:.1f}" height="{h:.1f}" fill="{color}">'
+                f'<title>{escape(titulo)}</title></rect>'
+            )
+
+        if i % max(1, len(serie) // 8) == 0 or i == len(serie) - 1:
+            partes.append(
+                f'<text x="{x + barra / 2:.1f}" y="{alto - 12}" font-size="10" text-anchor="middle" fill="#6b7280">{d["dia"][5:]}</text>'
+            )
+
+    partes.append("</svg>")
+
+    return Markup("".join(partes))
+
+
+def grafico_barras_productos(lista):
+    """Barras horizontales por producto: % resuelto por IA."""
+
+    from markupsafe import Markup, escape
+
+    if not lista:
+        return Markup("")
+
+    fila, ancho = 34, 760
+
+    alto = fila * len(lista) + 8
+
+    partes = [f'<svg viewBox="0 0 {ancho} {alto}" width="100%" role="img" aria-label="Resolución por producto">']
+
+    for i, g in enumerate(lista):
+
+        y = 6 + i * fila
+
+        pct = g["pct_ia"]
+
+        partes.append(f'<text x="0" y="{y + 16}" font-size="12" fill="#374151">{escape(g["nombre"])} ({g["total"]})</text>')
+        partes.append(f'<rect x="170" y="{y + 3}" width="480" height="16" rx="4" fill="#e5e7eb"/>')
+        partes.append(f'<rect x="170" y="{y + 3}" width="{480 * pct / 100:.1f}" height="16" rx="4" fill="#16a34a"><title>{pct}% resuelto por IA</title></rect>')
+        partes.append(f'<text x="660" y="{y + 16}" font-size="12" fill="#374151">{pct}% por IA</text>')
+
+    partes.append("</svg>")
+
+    return Markup("".join(partes))
+
+
+def _rango_export(dias):
+
+    zona = timezone(timedelta(hours=-3))
+
+    hasta = datetime.now(zona).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+
+    return hasta - timedelta(days=dias), hasta
+
+
+def _parametros_export():
+
+    try:
+        dias = min(365, max(1, int(request.args.get("dias", 30))))
+    except ValueError:
+        dias = 30
+
+    canal = request.args.get("canal", "")
+
+    return dias, canal if canal in ("playground", "whatsapp", "simulado") else None
+
+
+def _respuesta_archivo(datos, nombre, mime):
+
+    from flask import Response
+
+    return Response(
+        datos, mimetype=mime,
+        headers={"Content-Disposition": f'attachment; filename="{nombre}"'}
+    )
+
+
+@app.route("/metricas/exportar.xlsx")
+def metricas_exportar_xlsx():
+
+    dias, canal = _parametros_export()
+
+    desde, hasta = _rango_export(dias)
+
+    reporte = reportes_service.calcular_reporte(desde, hasta, canal)
+
+    return _respuesta_archivo(
+        reportes_service.xlsx_reporte(reporte, desde, hasta, canal),
+        f"metricas-{dias}d.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+@app.route("/metricas/exportar.csv")
+def metricas_exportar_csv():
+
+    dias, canal = _parametros_export()
+
+    desde, hasta = _rango_export(dias)
+
+    return _respuesta_archivo(
+        reportes_service.csv_conversaciones(desde, hasta, canal),
+        f"conversaciones-{dias}d.csv", "text/csv; charset=utf-8"
+    )
+
+
+def _autorizado_exportar():
+
+    if not EXPORT_API_KEY:
+        return jsonify({"error": "Falta definir EXPORT_API_KEY en el servidor."}), 503
+
+    token = request.headers.get("X-API-Key", "") or request.args.get("clave", "")
+
+    if not hmac.compare_digest(token.strip(), EXPORT_API_KEY):
+        return jsonify({"error": "No autorizado."}), 401
+
+    return None
+
+
+@app.route("/api/exportar/conversaciones.csv")
+def api_exportar_csv():
+    """Para Power BI / Excel (Obtener datos > Web), con X-API-Key o ?clave=."""
+
+    rechazo = _autorizado_exportar()
+
+    if rechazo:
+        return rechazo
+
+    dias, canal = _parametros_export()
+
+    desde, hasta = _rango_export(dias)
+
+    return _respuesta_archivo(
+        reportes_service.csv_conversaciones(desde, hasta, canal),
+        "conversaciones.csv", "text/csv; charset=utf-8"
+    )
+
+
+@app.route("/api/exportar/resumen.json")
+def api_exportar_resumen():
+
+    rechazo = _autorizado_exportar()
+
+    if rechazo:
+        return rechazo
+
+    dias, canal = _parametros_export()
+
+    desde, hasta = _rango_export(dias)
+
+    return jsonify({
+        "resumen": reportes_service.calcular_reporte(desde, hasta, canal),
+        "por_dia": reportes_service.serie_diaria(dias, canal),
+        "brechas": reportes_service.brechas(dias, canal),
+    })
+
+
+# ---------------- reporte semanal ----------------
+
+@app.route("/reportes/generar", methods=["POST"])
+@solo_admin
+def reportes_generar():
+
+    if request.form.get("modo") == "ultimos7":
+
+        hasta = datetime.now(timezone(timedelta(hours=-3))).replace(minute=0, second=0, microsecond=0)
+
+        desde = hasta - timedelta(days=7)
+
+    else:
+
+        desde, hasta = reportes_service.semana_anterior()
+
+    enviar = request.form.get("enviar") == "1"
+
+    canal = request.form.get("canal", "whatsapp")
+
+    canal = canal if canal in ("playground", "whatsapp", "simulado") else None
+
+    _, _, envio = reportes_service.generar_y_enviar(desde, hasta, canal, automatico=False, enviar=enviar)
+
+    flash(
+        "Reporte generado."
+        + (f" Enviado por: {envio}." if envio else (" No se envió porque no hay canales configurados." if enviar else ""))
+    )
+
+    return redirect(url_for("metricas") + "#reportes")
+
+
+@app.route("/reportes/<int:reporte_id>/descargar.xlsx")
+def reportes_descargar(reporte_id):
+
+    reporte = reportes_service.obtener_reporte(reporte_id)
+
+    if not reporte:
+
+        flash("No se encontró el reporte.")
+
+        return redirect(url_for("metricas"))
+
+    zona = timezone(timedelta(hours=-3))
+
+    desde = datetime.strptime(reporte["periodo_desde"], "%Y-%m-%d %H:%M").replace(tzinfo=zona)
+    hasta = datetime.strptime(reporte["periodo_hasta"], "%Y-%m-%d %H:%M").replace(tzinfo=zona)
+
+    canal = reporte["canal"] if reporte["canal"] in ("playground", "whatsapp", "simulado") else None
+
+    return _respuesta_archivo(
+        reportes_service.xlsx_reporte(reporte, desde, hasta, canal),
+        f"reporte-{desde.strftime('%Y-%m-%d')}.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+# ---------------- valoración humana ----------------
+
+@app.route("/valoraciones/<conversacion_id>", methods=["POST"])
+def valoraciones_votar(conversacion_id):
+
+    try:
+        voto = int(request.form.get("voto", "0"))
+    except ValueError:
+        voto = 0
+
+    error = valoraciones_service.votar(
+        conversacion_id, (g.usuario or {}).get("usuario", ""), voto,
+        request.form.get("correccion", "")
+    )
+
+    flash(error or ("¡Gracias! Valoración guardada." if voto > 0 else "Gracias: la corrección quedó registrada para mejorar al agente."))
+
+    return redirect((request.referrer or url_for("metricas")).split("#")[0] + "#conversaciones")
+
+
+@app.route("/agentes/<int:agente_id>/sugerir", methods=["POST"])
+@solo_admin
+def agentes_sugerir(agente_id):
+    """
+    Propone nuevas instrucciones para el agente a partir de las correcciones
+    del equipo. No las aplica: el administrador las revisa y las guarda.
+    """
+
+    agente = agentes_service.obtener(agente_id)
+
+    if not agente:
+        return jsonify({"error": "No se encontró el agente."}), 404
+
+    correcciones = valoraciones_service.correcciones(agente_id, 20)
+
+    if not correcciones:
+        return jsonify({"error": "Este agente todavía no tiene correcciones (👎 con texto)."}), 400
+
+    if not client:
+        return jsonify({"error": "Falta configurar la IA en el servidor."}), 503
+
+    lista = "\n".join(
+        f"- Consulta: {c['problema'] or '(sin detalle)'} | Qué debió hacer: {c['correccion']}"
+        for c in correcciones
+    )
+
+    try:
+
+        r = client.chat.completions.create(
+            model=MODELO_AGENTE,
+            messages=[
+                {"role": "system", "content": (
+                    "Sos un experto en escribir instrucciones para agentes de soporte técnico por "
+                    "WhatsApp. Te paso las instrucciones propias actuales de un agente y correcciones "
+                    "reales del equipo de mesa de ayuda sobre respuestas que salieron mal. Devolvé SOLO "
+                    "el texto nuevo de las instrucciones propias (máximo 1200 caracteres, en español, "
+                    "en frases cortas), conservando lo que ya funcionaba e incorporando lo que enseñan "
+                    "las correcciones. No agregues reglas que contradigan: no inventar procedimientos, "
+                    "no pedir ni indicar cambios en bases de datos, derivar cuando no hay documentación."
+                )},
+                {"role": "user", "content": (
+                    f"Agente: {agente['nombre']} ({agente['producto']}"
+                    + (f" / {agente['categoria']}" if agente["categoria"] else "") + ")\n\n"
+                    f"Instrucciones actuales:\n{agente['instrucciones'] or '(ninguna)'}\n\n"
+                    f"Correcciones del equipo:\n{lista}"
+                )},
+            ],
+        )
+
+        texto = (r.choices[0].message.content or "").strip()
+
+    except Exception as e:
+
+        _, explicacion = clasificar_error_ia(e)
+
+        return jsonify({"error": f"No se pudo consultar a la IA: {explicacion}."}), 502
+
+    return jsonify({"sugerencia": texto[:2000], "correcciones": len(correcciones)})
+
+
+# ---------------- búsqueda semántica y capturas ----------------
+
+@app.route("/embeddings/indexar", methods=["POST"])
+@solo_admin
+def embeddings_indexar():
+
+    if EMBEDDER is None:
+
+        flash("La búsqueda semántica no está disponible: " + estado_semantico()["motivo"])
+
+    else:
+
+        threading.Thread(target=indexar_faltantes, daemon=True).start()
+
+        flash("Indexando los documentos para la búsqueda semántica. Puede tardar unos minutos; actualizá la página para ver el avance.")
+
+    return redirect(url_for("knowledge"))
+
+
+@app.route("/media/<token>")
+def media(token):
+    """Captura de un manual con enlace firmado y con vencimiento (sin iniciar sesión)."""
+
+    from flask import abort
+
+    ruta = adjuntos_service.verificar(token)
+
+    if not ruta:
+        abort(404)
+
+    base = os.path.realpath(IMAGES_DIR)
+
+    destino = os.path.realpath(os.path.join(base, ruta))
+
+    if not destino.startswith(base + os.sep) or not os.path.isfile(destino):
+        abort(404)
+
+    return send_file(destino, max_age=3600)
+
+
+# ---------------- registro de cambios ----------------
+
+@app.route("/auditoria")
+@solo_admin
+def auditoria():
+
+    return render_seccion(
+        "auditoria",
+        registros=auditoria_service.listar(
+            300, request.args.get("usuario", ""), request.args.get("q", "")
+        ),
+        usuarios_filtro=[u["usuario"] for u in usuarios_service.listar()],
+        filtro_usuario=request.args.get("usuario", ""),
+        filtro_texto=request.args.get("q", ""),
+    )
+
+
+@app.route("/auditoria.csv")
+@solo_admin
+def auditoria_csv():
+
+    import csv as _csv
+
+    salida = io.StringIO()
+
+    w = _csv.writer(salida)
+
+    w.writerow(["fecha_utc", "usuario", "rol", "accion", "detalle", "ip", "resultado"])
+
+    for r in auditoria_service.listar(5000, request.args.get("usuario", ""), request.args.get("q", "")):
+        w.writerow([r["fecha"], r["usuario"], r["rol"], r["accion"], r["detalle"], r["ip"], r["resultado"]])
+
+    return _respuesta_archivo(("\ufeff" + salida.getvalue()).encode("utf-8"), "registro-de-cambios.csv", "text/csv; charset=utf-8")
 
 
 @app.route("/playground")
@@ -2681,7 +3522,7 @@ def knowledge_reprocesar(doc_id):
 
         guardar_documentos(documentos)
 
-    COLA_PROCESAMIENTO.submit(procesar_documento, doc_id, ruta_pdf)
+    COLA_PROCESAMIENTO.submit(procesar_y_tipificar, doc_id, ruta_pdf, None)
 
     flash("Reprocesando el documento. La página se actualiza sola.")
 
@@ -2764,6 +3605,8 @@ def playground_chat():
             "No se pudo guardar esta conversación para las métricas."
         )
 
+    resultado["imagenes"] = _capturas_para(resultado)
+
     return jsonify(resultado)
 
 
@@ -2823,8 +3666,56 @@ def _rechazo_ucontact():
     return None
 
 
+def _url_base():
+    """URL pública del servicio (para los enlaces de las capturas)."""
+
+    base = (
+        os.environ.get("URL_PUBLICA", "").strip()
+        or os.environ.get("RENDER_EXTERNAL_URL", "").strip()
+    )
+
+    if base:
+        return base.rstrip("/")
+
+    esquema = request.headers.get("X-Forwarded-Proto", request.scheme)
+
+    return f"{esquema}://{request.host}"
+
+
+def _capturas_para(resultado):
+    """Enlaces firmados a las capturas del manual que respaldan la respuesta."""
+
+    if not ENVIAR_CAPTURAS:
+        return []
+
+    estado = resultado.get("estado") or {}
+
+    if (estado.get("derivacion") or {}).get("derivar"):
+        return []
+
+    try:
+
+        imagenes = adjuntos_service.imagenes_para_respuesta(resultado, documentos_para_vista())
+
+        return [
+            {
+                "url": f"{_url_base()}/media/{adjuntos_service.firma_token(i['ruta'])}",
+                "descripcion": i["descripcion"],
+                "documento": i["documento"],
+            }
+            for i in imagenes
+        ]
+
+    except Exception as e:
+
+        print(f"No se pudieron preparar las capturas: {e}")
+
+        return []
+
+
 def _payload_ucontact(conversacion_id, producto, respuesta, estado,
-                      resumen, derivar, destino, motivo, agente_nombre=""):
+                      resumen, derivar, destino, motivo, agente_nombre="",
+                      imagenes=None):
 
     etapa = estado.get("etapa", "") if estado else ""
 
@@ -2849,7 +3740,8 @@ def _payload_ucontact(conversacion_id, producto, respuesta, estado,
         "categoria": (estado or {}).get("categoria", ""),
         "subcategoria": (estado or {}).get("subcategoria", ""),
         "resumen_tecnico": resumen,
-        "agente": agente_nombre
+        "agente": agente_nombre,
+        "imagenes": imagenes or []
     }
 
 
@@ -2883,7 +3775,9 @@ def ucontact_mensaje():
 
     producto_recibido = _primero(datos, "product", "producto")
 
-    if not external_id or not mensaje:
+    adjuntos = adjuntos_service.adjuntos_del_payload(datos)
+
+    if not external_id or not (mensaje or adjuntos):
 
         return jsonify({
             "ok": False,
@@ -2962,13 +3856,37 @@ def ucontact_mensaje():
     if sesion and sesion["cerrada"]:
         sesion = None
 
-    if not client:
+    # ---- audios y fotos del cliente: se transcriben / leen y se suman al mensaje
+    if adjuntos:
 
-        return jsonify({
-            "ok": False,
-            "accion": "error",
-            "error": "La IA no está configurada en el servidor."
-        }), 503
+        textos, errores = adjuntos_service.procesar(
+            adjuntos, client, MODELO_TRANSCRIPCION, MODELO_VISION
+        )
+
+        if errores:
+            print(f"Adjuntos (uContact): {'; '.join(errores)}")
+
+        if textos:
+            mensaje = (mensaje + "\n\n" if mensaje else "") + "\n".join(textos)
+
+        mensaje = mensaje[:3000]
+
+        # No se pudo leer nada y el cliente no escribió: se le pide que escriba
+        if not mensaje.strip():
+
+            payload = {
+                "ok": True,
+                "accion": "responder",
+                "respuesta": (
+                    "No pude escuchar ni leer el archivo que me mandaste. "
+                    "¿Podés escribirme en un mensaje qué te está pasando?"
+                ),
+                "derivar": False, "destino": "", "cola": "", "imagenes": [],
+                "resuelto": False, "etapa": "", "categoria": "", "subcategoria": "",
+                "conversacion_id": (sesion or {}).get("conversacion_id", ""),
+            }
+
+            return jsonify(payload)
 
     if sesion:
         historial, estado_previo = ucontact_service.cargar_contexto(
@@ -2978,26 +3896,44 @@ def ucontact_mensaje():
     else:
         historial, estado_previo, conversacion_id = [], None, ""
 
-    try:
+    # ---- ¿la IA está disponible? Si no, el caso pasa a una persona
+    falla = ""
 
-        resultado = atender_con_agentes(
-            producto=producto,
-            mensaje=mensaje,
-            historial=historial,
-            estado_previo=estado_previo,
-            conversacion_id=conversacion_id,
-            incluir_pendientes=WHATSAPP_INCLUIR_PENDIENTES
-        )
+    if not client:
+        falla = "La IA no está configurada en el servidor."
+    elif not ia_disponible():
+        falla = f"IA en pausa por fallas recientes ({_IA['ultimo_error']})."
+    elif limite_de_gasto_superado():
+        falla = "Se superó el tope de gasto diario de IA."
 
-    except Exception as e:
+    resultado = None
 
-        print(f"Error en el agente (uContact): {e}")
+    if not falla:
 
-        return jsonify({
-            "ok": False,
-            "accion": "error",
-            "error": f"No se pudo obtener respuesta del agente: {e}"
-        }), 502
+        try:
+
+            resultado = atender_con_agentes(
+                producto=producto,
+                mensaje=mensaje,
+                historial=historial,
+                estado_previo=estado_previo,
+                conversacion_id=conversacion_id,
+                incluir_pendientes=WHATSAPP_INCLUIR_PENDIENTES
+            )
+
+            ia_exito()
+
+        except Exception as e:
+
+            print(f"Error en el agente (uContact): {e}")
+
+            _, explicacion = ia_fallo(e)
+
+            falla = explicacion
+
+    if resultado is None:
+
+        resultado = resultado_por_falla_ia(producto, mensaje, falla)
 
     canal = "simulado" if MODO_SIMULADO else "whatsapp"
 
@@ -3012,9 +3948,14 @@ def ucontact_mensaje():
         )
 
         if not sesion:
+
             ucontact_service.registrar_sesion(
                 external_id, conversacion_id, cliente, telefono, producto
             )
+
+            # ¿Muchos clientes reportando lo mismo? Se avisa a TI
+            if not resultado.get("ia_fallo"):
+                alertas_service.detectar_incidente(producto)
 
     except Exception as e:
 
@@ -3029,7 +3970,8 @@ def ucontact_mensaje():
         conversacion_id, producto, resultado["respuesta"], estado,
         resultado.get("resumen_tecnico"), deriv.get("derivar"),
         deriv.get("destino"), deriv.get("motivo"),
-        agente_nombre=(resultado.get("agente") or {}).get("nombre", "")
+        agente_nombre=(resultado.get("agente") or {}).get("nombre", ""),
+        imagenes=_capturas_para(resultado)
     )
 
     ucontact_service.guardar_respuesta(external_id, message_id, payload)
@@ -3374,6 +4316,11 @@ def health():
         "conexiones_cifrado_ok": crypto_service.disponible(),
         "conexiones_clave_origen": crypto_service.origen_de_la_clave(),
         "agente_pausado": agente_pausado(),
+        "ia_en_pausa_por_fallas": not ia_disponible(),
+        "busqueda_semantica": estado_semantico()["activa"],
+        "alertas_webhook": alertas_service.canales()["webhook"],
+        "alertas_email": alertas_service.canales()["email"],
+        "export_api_configurada": bool(EXPORT_API_KEY),
         "agentes_activos": sum(1 for x in agentes_service.listar() if x["activo"]),
         "sync_intervalo_min": SYNC_INTERVALO_MIN,
         "whatsapp_incluye_pendientes": WHATSAPP_INCLUIR_PENDIENTES,
