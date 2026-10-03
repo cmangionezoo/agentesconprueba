@@ -817,10 +817,6 @@
                                 </td>
 
                                 <td>
-                                    {{ documento.nivel }}
-                                </td>
-
-                                <td>
 
                                     {% if documento.estado == "Vigente" %}
 
@@ -878,7 +874,6 @@
                                                 {{ documento.producto|tojson }},
                                                 {{ documento.categoria|tojson }},
                                                 {{ documento.subcategoria|tojson }},
-                                                {{ documento.nivel|tojson }},
                                                 {{ documento.estado|tojson }},
                                                 {{ documento.fuente|tojson }},
                                                 {{ documento.descripcion|tojson }}
@@ -909,7 +904,6 @@
                                                 {{ documento.producto|tojson }},
                                                 {{ documento.categoria|tojson }},
                                                 {{ documento.subcategoria|tojson }},
-                                                {{ documento.nivel|tojson }},
                                                 {{ documento.estado|tojson }},
                                                 {{ documento.fuente|tojson }},
                                                 {{ documento.descripcion|tojson }}
@@ -922,7 +916,7 @@
                                         <form action="/knowledge/documento/{{ documento.id }}/tipificar"
                                               method="POST"
                                               style="margin:0;"
-                                              onsubmit="return confirm('La IA va a volver a decidir categoría, subcategoría, nivel, fuente y descripción (el estado no cambia). ¿Seguir?')">
+                                              onsubmit="return confirm('La IA va a volver a decidir categoría, subcategoría, fuente y descripción (el estado no cambia). ¿Seguir?')">
                                             <button class="secondary" type="submit">
                                                 🤖 Tipificar con IA
                                             </button>
@@ -1152,7 +1146,7 @@
                                     <th>Agente</th>
                                     <th>Atiende</th>
                                     <th>Estado</th>
-                                    <th>Documentos<br><small>(Vigentes L1)</small></th>
+                                    <th>Documentos<br><small>(Vigentes)</small></th>
                                     <th>Conversaciones</th>
                                     <th>Resueltas</th>
                                     <th>Derivadas</th>
@@ -1450,7 +1444,7 @@
             <form method="POST"
                   action="/tipificaciones/retipificar"
                   style="margin:0;"
-                  onsubmit="return confirm('La IA va a volver a decidir la categoría y subcategoría de los documentos cuya categoría no es una tipificación de su producto. No toca nivel, fuente, descripción ni estado. ¿Seguir?')">
+                  onsubmit="return confirm('La IA va a volver a decidir la categoría y subcategoría de los documentos cuya categoría no es una tipificación de su producto. No toca fuente, descripción ni estado. ¿Seguir?')">
                 <button type="submit" class="secondary">
                     🤖 Tipificar los documentos con estas tipificaciones
                 </button>
@@ -1702,17 +1696,6 @@
                         </div>
 
                         <div>
-                            <label>Nivel de soporte</label>
-                            <select name="nivel">
-                                <option value="auto" selected>🤖 Automático (IA)</option>
-                                <option>L1</option>
-                                <option>L2</option>
-                                <option>L3</option>
-                                <option>Todos</option>
-                            </select>
-                        </div>
-
-                        <div>
                             <label>Estado</label>
                             <select name="estado">
                                 <option selected>Vigente</option>
@@ -1900,7 +1883,7 @@
 
                 upNodos.slice(1).forEach(function (nodo) {
 
-                    ["producto", "categoria", "subcategoria", "nivel",
+                    ["producto", "categoria", "subcategoria",
                      "estado", "fuente", "descripcion"].forEach(function (campo) {
 
                         var destino = nodo.querySelector('[name="' + campo + '"]');
@@ -2063,7 +2046,7 @@
                             <span>{{ sg.titulo }}</span>
                             <span class="tag gray">{{ sg.total }}</span>
                             {% if g.producto and g.producto != "?" and sg.categoria not in ("__sin__", "__todas__") and sg.usables == 0 %}
-                            <span class="tag yellow" title="El especialista de esta tipificación no tiene documentos Vigentes de nivel L1: usa los del producto completo">Sin documentos usables</span>
+                            <span class="tag yellow" title="El especialista de esta tipificación no tiene documentos Vigentes: usa los del producto completo">Sin documentos usables</span>
                             {% endif %}
                         </summary>
 
@@ -2080,7 +2063,6 @@
                                             <th>Documento</th>
                                             <th>Producto</th>
                                             <th>Categoría</th>
-                                            <th>Nivel</th>
                                             <th>Estado</th>
                                             <th>Acciones</th>
                                         </tr>
@@ -2206,17 +2188,6 @@
                             </div>
 
                             <div>
-                                <label>Nivel de soporte</label>
-                                <select name="nivel" id="editNivel">
-                                    <option value="">(sin nivel)</option>
-                                    <option>L1</option>
-                                    <option>L2</option>
-                                    <option>L3</option>
-                                    <option>Todos</option>
-                                </select>
-                            </div>
-
-                            <div>
                                 <label>Estado</label>
                                 <select name="estado" id="editEstado">
                                     <option>Vigente</option>
@@ -2304,11 +2275,6 @@
                         <p>
                             <strong>Subcategoría:</strong>
                             <span id="infoSubcategoria"></span>
-                        </p>
-
-                        <p>
-                            <strong>Nivel:</strong>
-                            <span id="infoNivel"></span>
                         </p>
 
                         <p>
@@ -2910,7 +2876,7 @@
                     </label>
                     <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
                         <input type="checkbox" name="tipificar_ia" value="1" style="width:auto;" checked>
-                        Tipificar con IA (categoría, subcategoría, nivel, fuente y descripción)
+                        Tipificar con IA (categoría, subcategoría, fuente y descripción)
                     </label>
                     <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
                         <input type="checkbox" name="auto_vigente" value="1" style="width:auto;" checked>
@@ -4453,7 +4419,7 @@
 
     function editarDocumento(
         id, nombre, producto, categoria, subcategoria,
-        nivel, estado, fuente, descripcion
+        estado, fuente, descripcion
     ) {
 
         document.getElementById("editTitulo").textContent =
@@ -4489,7 +4455,6 @@
         editProductoCambio();
         poner("editCategoria", categoria);
         poner("editSubcategoria", subcategoria);
-        poner("editNivel", nivel);
         poner("editEstado", estado);
         poner("editFuente", fuente);
         poner("editDescripcion", descripcion);
@@ -4512,7 +4477,6 @@
         producto,
         categoria,
         subcategoria,
-        nivel,
         estado,
         fuente,
         descripcion
@@ -4532,9 +4496,6 @@
 
         document.getElementById("infoSubcategoria").textContent =
             subcategoria || "-";
-
-        document.getElementById("infoNivel").textContent =
-            nivel || "-";
 
         document.getElementById("infoEstado").textContent =
             estado || "-";
