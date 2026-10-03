@@ -2597,7 +2597,9 @@ def agentes_pausar():
 
 @app.route("/agentes/configurar")
 def agentes_configurar():
-    return render_seccion("agente_config")
+    # Antes era una pantalla de ejemplo que no guardaba nada: los agentes se
+    # configuran en la lista de Agentes (botón "Configurar" de cada uno).
+    return redirect(url_for("agentes") + "#agentesLista")
 
 
 @app.route("/knowledge")
