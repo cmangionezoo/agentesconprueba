@@ -105,6 +105,8 @@ conversation_service.init_db(
 
 ucontact_service.init_tablas()
 
+ucontact_service.sembrar_campanias()
+
 usuarios_service.init_tablas()
 
 conexiones_service.init_tablas()
@@ -1957,6 +1959,7 @@ ACCIONES_AUDITADAS = {
     "agentes_editar": "Editó un agente",
     "agentes_estado": "Pausó / activó un agente",
     "agentes_pausar": "Pausó / reanudó a todos los agentes",
+    "colas_guardar": "Cambió las campañas de derivación",
     "tipificaciones_crear": "Agregó una tipificación",
     "tipificaciones_renombrar": "Renombró una tipificación",
     "tipificaciones_eliminar": "Eliminó una tipificación",
@@ -2317,6 +2320,8 @@ def _datos_resumen():
         "agentes": agentes_con_metricas(),
         "lista_tipificaciones": agentes_service.listar_tipificaciones(),
         "cobertura": cobertura_kb(),
+        "campanias": ucontact_service.campanias(),
+        "destinos": agent_service.DESTINOS,
     }
 
 
@@ -2488,6 +2493,24 @@ def tipificaciones_retipificar():
     )
 
     return redirect(url_for("agentes") + "#tipificaciones")
+
+
+@app.route("/colas/guardar", methods=["POST"])
+@solo_admin
+def colas_guardar():
+    """Campañas de uContact de un producto: la por defecto y, si hace falta, una por destino."""
+
+    error = ucontact_service.guardar_campanias(
+        request.form.get("producto", ""),
+        request.form.get("defecto", ""),
+        {d: request.form.get(f"destino_{d}", "") for d in agent_service.DESTINOS},
+        agent_service.PRODUCTOS,
+        agent_service.DESTINOS
+    )
+
+    flash(error or f"Campañas de {request.form.get('producto', '')} guardadas.")
+
+    return redirect(url_for("agentes") + "#campanias")
 
 
 @app.route("/agentes/<int:agente_id>/editar", methods=["POST"])
@@ -3581,6 +3604,14 @@ def playground_chat():
             "error": f"No se pudo obtener respuesta del agente: {e}"
         }), 502
 
+    deriv_pg = (resultado.get("estado") or {}).get("derivacion") or {}
+
+    if deriv_pg.get("derivar"):
+
+        resultado["cola"] = ucontact_service.resolver_cola(
+            (resultado.get("estado") or {}).get("producto") or "", deriv_pg.get("destino")
+        )
+
     # Se guarda la conversación para las métricas. Si falla el guardado
     # no se corta la charla: el cliente igual recibe la respuesta.
     try:
@@ -3666,6 +3697,18 @@ def _rechazo_ucontact():
     return None
 
 
+def avisar_sin_campania(producto, destino):
+    """Un caso se quiso derivar pero el producto no tiene campaña en uContact."""
+
+    alertas_service.notificar(
+        "config", f"sin_campania:{producto}",
+        f"Derivación sin campaña: {producto} no tiene campaña de uContact configurada",
+        f"Un cliente de {producto} tuvo que derivarse ({destino or 'sin destino'}) pero no hay campaña "
+        "cargada. El flujo de uContact recibió cola vacía. Cargala en Agentes → Campañas de derivación.",
+        enfriamiento=120
+    )
+
+
 def _url_base():
     """URL pública del servicio (para los enlaces de las capturas)."""
 
@@ -3719,6 +3762,11 @@ def _payload_ucontact(conversacion_id, producto, respuesta, estado,
 
     etapa = estado.get("etapa", "") if estado else ""
 
+    cola = ucontact_service.resolver_cola(producto, destino) if derivar else ""
+
+    if derivar and not cola:
+        avisar_sin_campania(producto, destino)
+
     if derivar:
         accion = "derivar"
     elif etapa == "Resuelto":
@@ -3733,7 +3781,9 @@ def _payload_ucontact(conversacion_id, producto, respuesta, estado,
         "respuesta": respuesta,
         "derivar": bool(derivar),
         "destino": destino or "",
-        "cola": ucontact_service.resolver_cola(producto, destino) if derivar else "",
+        "cola": cola,
+        "campania": cola,
+        "sin_cola": bool(derivar and not cola),
         "motivo_derivacion": motivo or "",
         "resuelto": accion == "cerrar",
         "etapa": etapa,
@@ -3934,6 +3984,11 @@ def ucontact_mensaje():
     if resultado is None:
 
         resultado = resultado_por_falla_ia(producto, mensaje, falla)
+
+    deriv_previa = (resultado.get("estado") or {}).get("derivacion") or {}
+
+    if deriv_previa.get("derivar"):
+        resultado["cola"] = ucontact_service.resolver_cola(producto, deriv_previa.get("destino"))
 
     canal = "simulado" if MODO_SIMULADO else "whatsapp"
 
@@ -4316,6 +4371,10 @@ def health():
         "conexiones_cifrado_ok": crypto_service.disponible(),
         "conexiones_clave_origen": crypto_service.origen_de_la_clave(),
         "agente_pausado": agente_pausado(),
+        "productos_sin_campania": [
+            p for p in agent_service.PRODUCTOS
+            if not ucontact_service.resolver_cola(p, "MDA")
+        ],
         "ia_en_pausa_por_fallas": not ia_disponible(),
         "busqueda_semantica": estado_semantico()["activa"],
         "alertas_webhook": alertas_service.canales()["webhook"],
