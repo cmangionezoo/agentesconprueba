@@ -115,6 +115,17 @@ def _pct(parte, total):
     return round(parte * 100 / total, 1) if total else 0.0
 
 
+def _contar(filas, clave):
+    """[{nombre, total}] ordenado de mayor a menor."""
+
+    cuenta = {}
+
+    for f in filas:
+        cuenta[clave(f)] = cuenta.get(clave(f), 0) + 1
+
+    return [{"nombre": k, "total": v} for k, v in sorted(cuenta.items(), key=lambda x: -x[1])]
+
+
 def _agrupar(filas, clave):
 
     grupos = {}
@@ -321,6 +332,9 @@ def calcular_reporte(desde, hasta, canal="whatsapp"):
         "votos_negativos": v["n"] or 0,
         "por_producto": _agrupar(filas, lambda f: f["producto"] or "(sin producto)"),
         "por_agente": _agrupar(filas, lambda f: f["agente_nombre"] or "(sin agente)"),
+        "derivadas_por_campania": _contar(
+            [f for f in filas if f["derivada"]], lambda f: f["cola"] or "(sin campaña)"
+        ),
         "brechas": brechas(dias=dias, canal=canal, hoy=hasta.astimezone(ARG) - timedelta(days=1))[:5],
     }
 
@@ -345,6 +359,11 @@ def texto_reporte(r):
         "",
         "Por producto:",
     ] + [fila(g) for g in r["por_producto"]] + ["", "Por agente:"] + [fila(g) for g in r["por_agente"][:10]]
+
+    if r.get("derivadas_por_campania"):
+        lineas += ["", "Derivadas por campaña:"] + [
+            f"  - {c['nombre']}: {c['total']}" for c in r["derivadas_por_campania"]
+        ]
 
     if r["brechas"]:
         lineas += ["", "Temas sin documentación (consultas que el agente no pudo resolver):"]
@@ -463,7 +482,7 @@ def iniciar_programador(intervalo=300):
 
 COLUMNAS = [
     "id", "fecha_arg", "canal", "producto", "agente", "categoria", "subcategoria",
-    "estado", "destino", "motivo", "mensajes", "minutos", "tokens_in", "tokens_out",
+    "estado", "destino", "campania", "motivo", "mensajes", "minutos", "tokens_in", "tokens_out",
     "costo_usd", "valoracion", "falla_ia", "problema",
 ]
 
@@ -479,7 +498,7 @@ def conversaciones_filas(desde, hasta, canal=None):
         salida.append([
             f["id"], _dt(f["creada"]).astimezone(ARG).strftime("%Y-%m-%d %H:%M:%S"),
             f["canal"], f["producto"], f["agente_nombre"], f["categoria"], f["subcategoria"],
-            _estado(f), f["destino"], f["motivo"], f["mensajes"],
+            _estado(f), f["destino"], f["cola"] or "", f["motivo"], f["mensajes"],
             round(m, 1) if m is not None else "", f["tokens_in"] or 0, f["tokens_out"] or 0,
             round(costo_usd(f["tokens_in"], f["tokens_out"]), 5),
             (f["valor"] or 0), f["ia_fallo"] or 0, f["problema"],
