@@ -1284,6 +1284,77 @@
         </div>
 
 
+        <div class="card" id="campanias">
+
+            <h3>Campañas de derivación (uContact)</h3>
+
+            <p class="muted">
+                Cuando un agente deriva el caso a una persona, uContact lo transfiere a esta
+                <strong>campaña</strong>. La campaña «por defecto» sirve para todos los destinos del producto
+                (L2, Ecommerce, Desarrollo, MDA); si alguno necesita otra campaña, cargala en su columna.
+                Se envía en la respuesta del webhook como <code>cola</code> (y <code>campania</code>).
+            </p>
+
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead>
+                        <tr>
+                            <th>Producto</th>
+                            <th>Campaña por defecto</th>
+                            {% for d in destinos %}<th>{{ d }}<br><small class="muted">(opcional)</small></th>{% endfor %}
+                            {% if usuario_actual and usuario_actual.rol == "admin" %}<th></th>{% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in productos %}
+                        {% set c = campanias.get(p, {"defecto": "", "destinos": {}}) %}
+                        <tr>
+                            {% if usuario_actual and usuario_actual.rol == "admin" %}
+                            <form method="POST" action="/colas/guardar" id="colas{{ loop.index }}">
+                                <input type="hidden" name="producto" value="{{ p }}">
+                            </form>
+                            {% endif %}
+                            <td>
+                                <strong>{{ p }}</strong>
+                                {% if not c.defecto and not c.destinos %}
+                                <br><span class="tag yellow">Sin campaña</span>
+                                {% endif %}
+                            </td>
+                            {% if usuario_actual and usuario_actual.rol == "admin" %}
+                            <td><input type="text" name="defecto" form="colas{{ loop.index }}" value="{{ c.defecto }}"
+                                       placeholder="Ej. DF_CONSULTAS" style="min-width:150px;"></td>
+                            {% for d in destinos %}
+                            <td><input type="text" name="destino_{{ d }}" form="colas{{ loop.index }}" value="{{ c.destinos.get(d, '') }}"
+                                       placeholder="usa la por defecto" style="min-width:130px;"></td>
+                            {% endfor %}
+                            <td><button type="submit" form="colas{{ loop.index }}" class="primary" style="padding:8px 12px; font-size:12px;">Guardar</button></td>
+                            {% else %}
+                            <td>{{ c.defecto or "—" }}</td>
+                            {% for d in destinos %}<td>{{ c.destinos.get(d, "—") }}</td>{% endfor %}
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% for p in productos %}
+            {% set c = campanias.get(p, {"defecto": "", "destinos": {}}) %}
+            {% set rec = agentes|selectattr("producto", "equalto", p)|selectattr("categoria", "equalto", "")|first %}
+            {% if rec and rec.activo and not c.defecto and not c.destinos %}
+            <p style="background:#fef3c7; border-radius:7px; padding:8px 12px; font-size:12px; margin:10px 0 0;">
+                ⚠ <strong>{{ p }}</strong> tiene el agente activo pero ninguna campaña: si deriva un caso, uContact va a recibir la cola vacía.
+            </p>
+            {% endif %}
+            {% endfor %}
+
+            <p class="muted" style="margin:10px 0 0; font-size:12px;">
+                Pantera todavía no tiene campaña (su agente está pausado). Cuando la tengas, escribila acá y activá su agente.
+            </p>
+
+        </div>
+
+
         <div class="card" id="tipificaciones">
 
             <h3>Tipificaciones por producto</h3>
@@ -3809,6 +3880,7 @@
                 <table class="routing-table">
                     <thead>
                         <tr>
+                            <th>Campaña</th>
                             <th>Destino</th>
                             <th>Motivo</th>
                             <th>Cantidad</th>
@@ -3817,12 +3889,13 @@
                     <tbody>
                         {% for f in m.motivos_derivacion %}
                         <tr>
+                            <td><strong>{{ f.cola }}</strong></td>
                             <td>{{ f.destino or '-' }}</td>
                             <td>{{ f.motivo or '-' }}</td>
                             <td>{{ f.cantidad }}</td>
                         </tr>
                         {% else %}
-                        <tr><td colspan="3" class="muted">Todavía no hay derivaciones.</td></tr>
+                        <tr><td colspan="4" class="muted">Todavía no hay derivaciones.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -4003,7 +4076,7 @@
                                 {% if c.estado == "Resuelta por IA" %}
                                     <span class="tag green">Resuelta por IA</span>
                                 {% elif c.estado == "Derivada" %}
-                                    <span class="tag yellow">Derivada{% if c.destino %} a {{ c.destino }}{% endif %}</span>
+                                    <span class="tag yellow">Derivada{% if c.cola %} a {{ c.cola }}{% elif c.destino %} a {{ c.destino }}{% endif %}</span>
                                 {% else %}
                                     <span class="tag gray">En curso</span>
                                 {% endif %}
