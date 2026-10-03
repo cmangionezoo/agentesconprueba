@@ -641,7 +641,7 @@
         </a>
 
         <a href="/agentes"
-           class="{% if section == 'agentes' or section == 'agente_config' %}active{% endif %}">
+           class="{% if section == 'agentes' %}active{% endif %}">
             🤖 Agentes
         </a>
 
@@ -711,9 +711,7 @@
 
     <div class="topbar">
 
-        {% if section == "agente_config" %}
-            <h1>Configurar agente</h1>
-        {% elif section == "agentes" %}
+        {% if section == "agentes" %}
             <h1>Agentes</h1>
         {% elif section == "knowledge" %}
             <h1>Knowledge Base</h1>
@@ -962,8 +960,15 @@
         <div class="grid-4">
 
             <div class="stat">
-                <div class="stat-number">{{ 0 if pausado else 1 }}</div>
-                <div class="stat-label">Agentes activos</div>
+                <div class="stat-number">{{ 0 if pausado else agentes|selectattr("activo")|list|length }}</div>
+                <div class="stat-label">
+                    Agentes activos
+                    {% if pausado %}
+                    <br><small>(todos pausados)</small>
+                    {% else %}
+                    <br><small>de {{ agentes|length }} agentes</small>
+                    {% endif %}
+                </div>
             </div>
 
             <div class="stat">
@@ -1003,7 +1008,7 @@
                     {{ p }}{{ '' if (rec and rec.activo and not pausado) else ' · pausado' }}
                 </span>
                 {% endfor %}
-                <span class="tag gray">L1</span>
+                <span class="tag gray" title="Todos los agentes resuelven consultas de primer nivel y derivan a una persona cuando el caso lo supera">Soporte de primer nivel (L1)</span>
                 <span class="tag gray">WhatsApp</span>
                 {% if pausado %}<span class="tag yellow">Todos pausados</span>{% endif %}
 
@@ -1030,7 +1035,7 @@
 
                 <div>
                     <strong>Nivel</strong>
-                    <p class="muted">Soporte L1</p>
+                    <p class="muted">Primer nivel (L1): si el caso lo supera, deriva a una persona (campaña del producto)</p>
                 </div>
 
                 <div>
@@ -1458,445 +1463,7 @@
         </div>
 
 
-        <!-- ============================= -->
-        <!-- CONFIGURACIÓN DEL AGENTE -->
-        <!-- ============================= -->
-
-        {% elif section == "agente_config" %}
-
-        <div class="card">
-
-            <h2>Identidad del agente</h2>
-
-            <p class="muted">
-                Definí quién es el agente, qué producto atiende
-                y por qué canal trabaja.
-            </p>
-
-            <div class="grid">
-
-                <div>
-
-                    <label>Nombre del agente</label>
-
-                    <input type="text"
-                           value="Agente Técnico L1">
-
-                </div>
-
-                <div>
-
-                    <label>Producto</label>
-
-                    <select>
-
-                        <option selected>Dragonfish</option>
-                        <option>zNube</option>
-                        <option>Lince</option>
-                        <option>Pantera</option>
-
-                    </select>
-
-                </div>
-
-                <div>
-
-                    <label>Nivel de soporte</label>
-
-                    <select>
-
-                        <option selected>L1</option>
-                        <option>L2</option>
-                        <option>L3</option>
-
-                    </select>
-
-                </div>
-
-                <div>
-
-                    <label>Canal</label>
-
-                    <select>
-
-                        <option selected>WhatsApp</option>
-                        <option>Web</option>
-                        <option>Teams</option>
-
-                    </select>
-
-                </div>
-
-            </div>
-
-        </div>
-
-
-        <!-- OBJETIVO -->
-
-        <div class="card">
-
-            <h2>Objetivo del agente</h2>
-
-            <p class="muted">
-                Definí qué debe intentar lograr durante una conversación.
-            </p>
-
-            <textarea>Atender consultas de primer nivel sobre Dragonfish, zNube, Lince y Pantera, sean errores, dudas sobre cómo hacer algo o pedidos de información. Comprender qué necesita el cliente, responder o guiar con procedimientos documentados y validar el resultado. Si la consulta no puede resolverse en L1, debe derivarla al equipo correspondiente con un resumen técnico del caso.</textarea>
-
-        </div>
-
-
-        <!-- COMPORTAMIENTO -->
-
-        <div class="card">
-
-            <h2>Comportamiento</h2>
-
-            <p class="muted">
-                Reglas que el agente debe respetar durante toda la conversación.
-            </p>
-
-            <div class="check-list">
-
-                <label class="check-item">
-                    <input type="checkbox" checked>
-                    No inventar procedimientos ni soluciones.
-                </label>
-
-                <label class="check-item">
-                    <input type="checkbox" checked>
-                    Utilizar únicamente información respaldada por la Knowledge Base.
-                </label>
-
-                <label class="check-item">
-                    <input type="checkbox" checked>
-                    Solicitar información cuando los datos del problema sean insuficientes.
-                </label>
-
-                <label class="check-item">
-                    <input type="checkbox" checked>
-                    Realizar preguntas de diagnóstico antes de proponer una solución.
-                </label>
-
-                <label class="check-item">
-                    <input type="checkbox" checked>
-                    Explicar los pasos de forma clara y ordenada.
-                </label>
-
-                <label class="check-item">
-                    <input type="checkbox" checked>
-                    Validar con el usuario si la solución funcionó.
-                </label>
-
-                <label class="check-item">
-                    <input type="checkbox" checked>
-                    Derivar cuando el problema exceda las capacidades de L1.
-                </label>
-
-            </div>
-
-        </div>
-
-
-        <!-- LIMITES -->
-
-        <div class="card">
-
-            <h2>Límites del agente</h2>
-
-            <p class="muted">
-                Acciones que el agente no debe realizar.
-            </p>
-
-            <div class="check-list">
-
-                <label class="check-item">
-                    <input type="checkbox" checked>
-                    No inventar información técnica.
-                </label>
-
-                <label class="check-item">
-                    <input type="checkbox" checked>
-                    No ejecutar modificaciones directamente sobre bases de datos.
-                </label>
-
-                <label class="check-item">
-                    <input type="checkbox" checked>
-                    No indicar procedimientos de L2 como si fueran procedimientos de L1.
-                </label>
-
-                <label class="check-item">
-                    <input type="checkbox" checked>
-                    No afirmar que un problema está resuelto sin validarlo.
-                </label>
-
-                <label class="check-item">
-                    <input type="checkbox" checked>
-                    No continuar intentando soluciones indefinidamente.
-                </label>
-
-                <label class="check-item">
-                    <input type="checkbox" checked>
-                    No responder sobre procedimientos que no estén documentados.
-                </label>
-
-            </div>
-
-        </div>
-
-
-        <!-- DIAGNÓSTICO -->
-
-        <div class="card">
-
-            <h2>Información que debe construir durante el diagnóstico</h2>
-
-            <p class="muted">
-                El agente irá completando estos datos a medida que avanza
-                la conversación.
-            </p>
-
-            <div class="grid-3">
-
-                <div>
-                    <label>Producto</label>
-                    <input type="text"
-                           value="Según el producto de la consulta"
-                           readonly>
-                </div>
-
-                <div>
-                    <label>Categoría</label>
-                    <input type="text"
-                           placeholder="Ej. Facturación Electrónica">
-                </div>
-
-                <div>
-                    <label>Subcategoría</label>
-                    <input type="text"
-                           placeholder="Ej. CAE">
-                </div>
-
-                <div>
-                    <label>Problema</label>
-                    <input type="text"
-                           placeholder="Descripción del problema">
-                </div>
-
-                <div>
-                    <label>Diagnóstico</label>
-                    <input type="text"
-                           placeholder="Diagnóstico determinado">
-                </div>
-
-                <div>
-                    <label>Resultado</label>
-                    <select>
-
-                        <option selected>Pendiente</option>
-                        <option>Resuelto</option>
-                        <option>No resuelto</option>
-
-                    </select>
-                </div>
-
-            </div>
-
-        </div>
-
-
-        <!-- FLUJO -->
-
-        <div class="card">
-
-            <h2>Flujo de atención</h2>
-
-            <p class="muted">
-                Secuencia general que seguirá el agente.
-            </p>
-
-            <div class="flow">
-
-                <div class="flow-step">
-                    1. Recibir problema
-                </div>
-
-                <div class="arrow">→</div>
-
-                <div class="flow-step">
-                    2. Recopilar información
-                </div>
-
-                <div class="arrow">→</div>
-
-                <div class="flow-step">
-                    3. Diagnosticar
-                </div>
-
-                <div class="arrow">→</div>
-
-                <div class="flow-step">
-                    4. Aplicar procedimiento
-                </div>
-
-                <div class="arrow">→</div>
-
-                <div class="flow-step">
-                    5. Validar
-                </div>
-
-                <div class="arrow">→</div>
-
-                <div class="flow-step">
-                    6. Resolver / Derivar
-                </div>
-
-            </div>
-
-        </div>
-
-
-        <!-- DERIVACIONES -->
-
-        <div class="card">
-
-            <h2>Reglas de derivación</h2>
-
-            <p class="muted">
-                Determinan cuándo el agente debe dejar de intentar resolver
-                el caso y enviarlo al equipo correspondiente.
-            </p>
-
-            <table class="routing-table">
-
-                <thead>
-
-                    <tr>
-                        <th>Situación</th>
-                        <th>Destino</th>
-                    </tr>
-
-                </thead>
-
-                <tbody>
-
-                    <tr>
-                        <td>Problema de base de datos</td>
-                        <td class="route">L2</td>
-                    </tr>
-
-                    <tr>
-                        <td>Ecommerce / Tienda Nube</td>
-                        <td class="route">Ecommerce</td>
-                    </tr>
-
-                    <tr>
-                        <td>Desarrollo / error de aplicación</td>
-                        <td class="route">Desarrollo</td>
-                    </tr>
-
-                    <tr>
-                        <td>No existe procedimiento documentado</td>
-                        <td class="route">MDA</td>
-                    </tr>
-
-                    <tr>
-                        <td>Procedimiento L1 no resuelve</td>
-                        <td class="route">L2</td>
-                    </tr>
-
-                </tbody>
-
-            </table>
-
-        </div>
-
-
-        <!-- RESUMEN DE DERIVACIÓN -->
-
-        <div class="card">
-
-            <h2>Información para la derivación</h2>
-
-            <p class="muted">
-                Cuando el agente derive un caso, deberá entregar un resumen
-                estructurado para evitar que el usuario tenga que explicar
-                nuevamente el problema.
-            </p>
-
-            <div class="grid-3">
-
-                <div>
-                    <label>Problema</label>
-                    <input type="text"
-                           placeholder="Qué informó el usuario">
-                </div>
-
-                <div>
-                    <label>Diagnóstico</label>
-                    <input type="text"
-                           placeholder="Qué se pudo determinar">
-                </div>
-
-                <div>
-                    <label>Procedimiento realizado</label>
-                    <input type="text"
-                           placeholder="Qué se intentó">
-                </div>
-
-                <div>
-                    <label>Resultado</label>
-                    <input type="text"
-                           placeholder="Qué ocurrió">
-                </div>
-
-                <div>
-                    <label>Destino</label>
-                    <select>
-
-                        <option selected>Seleccionar</option>
-                        <option>L2</option>
-                        <option>Ecommerce</option>
-                        <option>Desarrollo</option>
-                        <option>MDA</option>
-
-                    </select>
-                </div>
-
-                <div>
-                    <label>Motivo de derivación</label>
-                    <input type="text"
-                           placeholder="Por qué se deriva">
-                </div>
-
-            </div>
-
-        </div>
-
-
-        <!-- GUARDAR -->
-
-        <div class="buttons">
-
-            <a href="/agentes"
-               class="button secondary">
-                ← Volver
-            </a>
-
-            <button class="primary"
-                    onclick="alert('Configuración guardada correctamente')">
-                Guardar configuración
-            </button>
-
-        </div>
-
-
-        <!-- ============================= -->
-        <!-- KNOWLEDGE -->
-        <!-- ============================= -->
-
-        {% elif section == "knowledge" %}
+{% elif section == "knowledge" %}
 
         <!-- KNOWLEDGE BASE -->
 
@@ -4165,11 +3732,12 @@
             <h2>Playground</h2>
 
             <p class="muted">
-                Probá conversaciones con el
-                <strong>Agente Técnico L1</strong>
-                antes de conectarlo a WhatsApp. El agente clasifica,
-                pregunta y responde usando los documentos de la
-                Knowledge Base.
+                Probá conversaciones con los
+                <strong>agentes</strong>
+                antes de conectarlos a WhatsApp: el agente de recepción del
+                producto clasifica la consulta y la pasa al especialista de la
+                tipificación, que pregunta y responde usando los documentos de
+                la Knowledge Base.
             </p>
 
             <div class="tags">
