@@ -490,8 +490,8 @@ def _formatear_contexto(estado_previo, fragmentos, categorias):
 
             bloques.append(
                 f"[{f['id']}] Documento: {f['documento']} | "
-                f"{f['categoria']} / {f['subcategoria']} | "
-                f"Nivel {f['nivel']}{pagina}{aviso}\n{f['texto']}"
+                f"{f['categoria']} / {f['subcategoria']}"
+                f"{pagina}{aviso}\n{f['texto']}"
             )
 
         partes.append(
