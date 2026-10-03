@@ -2,7 +2,7 @@
 Tipificación automática de documentos con IA.
 
 Lee el nombre, la carpeta de origen y el contenido del PDF y propone:
-producto (si no se sabe), categoría, subcategoría, nivel de soporte, fuente
+producto (si no se sabe), categoría, subcategoría, fuente
 y descripción. La categoría tiene que ser una de las TIPIFICACIONES del
 producto del documento (cada producto tiene las suyas). Solo se aceptan
 valores de las listas de la plataforma; lo demás se descarta.
@@ -12,8 +12,6 @@ import json
 import re
 import unicodedata
 
-
-NIVELES = ["L1", "L2", "L3", "Todos"]
 
 FUENTES = ["Procedimiento oficial", "Manual", "Documento interno", "Otro"]
 
@@ -91,18 +89,13 @@ Reglas:
 - "subcategoria": 1 a 4 palabras que nombren el tema puntual (por ejemplo
   "CAE", "Certificados", "Alta de artículos"). Sin inventar temas que el
   documento no trate.
-- "nivel": quién puede aplicar el procedimiento.
-  "L1" = soporte de primer nivel, sin acceso a base de datos ni a código.
-  "L2" = requiere acceso a la base de datos, al servidor o configuración
-  avanzada. "L3" = requiere desarrollo. "Todos" = información general que
-  sirve para cualquier nivel. Si dudás entre dos, elegí el más alto.
 - "fuente": una de __FUENTES__.
 - "descripcion": 1 o 2 oraciones que digan qué problema o procedimiento
   cubre el documento. Solo con lo que dice el contenido.
 - "confianza": "alta", "media" o "baja".
 
 Formato exacto:
-{"categoria": "", "subcategoria": "", "nivel": "", "fuente": "",
+{"categoria": "", "subcategoria": "", "fuente": "",
   "producto": "", "descripcion": "", "confianza": ""}
 """.strip()
 
@@ -149,8 +142,6 @@ def _normalizar(datos, productos, categorias_por_producto, producto_doc):
     return {
         "categoria": categoria,
         "subcategoria": str(datos.get("subcategoria") or "").strip()[:60],
-        # Ante la duda, un nivel alto: el agente L1 no usa documentos L2/L3
-        "nivel": _elegir(datos.get("nivel"), NIVELES, "L2"),
         "fuente": _elegir(datos.get("fuente"), FUENTES, "Otro"),
         "producto": producto,
         "descripcion": str(datos.get("descripcion") or "").strip()[:400],
@@ -210,7 +201,6 @@ def tipificar_por_reglas(nombre, ruta, texto, productos,
     return {
         "categoria": mejor,
         "subcategoria": "",
-        "nivel": "L1",
         "fuente": "Documento interno",
         "producto": producto_doc,
         "descripcion": resumen[:200],
@@ -223,7 +213,7 @@ def tipificar_por_reglas(nombre, ruta, texto, productos,
 def tipificar(client, modelo, nombre, ruta_origen, texto, productos,
               simulado=False, categorias_por_producto=None, producto_doc=""):
     """
-    Devuelve un dict con categoria, subcategoria, nivel, fuente, producto,
+    Devuelve un dict con categoria, subcategoria, fuente, producto,
     descripcion, confianza y via ('IA' o 'reglas'). Lanza ErrorTipificacion
     si no se pudo.
 
