@@ -1,181 +1,3 @@
-{% macro fila_documento(documento) %}
-
-                            <tr class="kb-fila"
-                                data-producto="{{ documento.producto }}"
-                                data-categoria="{{ documento.categoria }}"
-                                data-nombre="{{ documento.nombre or documento.archivo }}"
-                                data-estado="{{ documento.estado }}">
-
-                                <td>
-                                    📄 {{ documento.nombre or documento.archivo }}
-
-                                    {% if documento.origen %}
-                                        <br><small>☁ {{ documento.origen.conexion }}{% if documento.origen.ruta %} · {{ documento.origen.ruta }}{% endif %}</small>
-                                    {% endif %}
-
-                                    {% if documento.procesamiento == "PROCESANDO" %}
-                                        <br><span class="tag yellow">⏳ Procesando…</span>
-                                    {% elif documento.procesamiento == "ERROR" %}
-                                        <br><span class="tag gray">⚠ Error al procesar</span>
-                                        <br><small>{{ documento.error }}</small>
-                                    {% else %}
-                                        <br><small>{{ documento.cantidad_imagenes or 0 }} imágenes analizadas{% if documento.paginas_escaneadas %} · {{ documento.paginas_escaneadas }} pág. escaneadas{% endif %}</small>
-                                        {% if documento.simulado %}
-                                            <br><span class="tag yellow">🧪 Procesado en simulación</span>
-                                        {% endif %}
-                                        {% if documento.advertencia or documento.imagenes_con_error %}
-                                            <br><span class="tag yellow">⚠ Imágenes sin analizar</span>
-                                            {% if documento.advertencia %}<br><small>{{ documento.advertencia }}</small>{% endif %}
-                                        {% endif %}
-                                    {% endif %}
-                                </td>
-
-                                <td>
-                                    {% if documento.producto %}
-                                        {{ documento.producto }}
-                                    {% else %}
-                                        <span class="muted">Todos<br><small>(compartido)</small></span>
-                                    {% endif %}
-                                </td>
-
-                                <td>
-                                    {{ documento.categoria }}
-
-                                    {% if documento.subcategoria %}
-                                        <br>
-                                        <small>{{ documento.subcategoria }}</small>
-                                    {% endif %}
-
-                                    {% set tip = documento.tipificacion or {} %}
-
-                                    {% if tip.error %}
-                                        <br><span class="tag gray" title="{{ tip.error }}">⚠ No se pudo tipificar</span>
-                                    {% elif tip.origen == "IA" and not tip.revisada %}
-                                        <br><span class="tag yellow">🤖 Tipificado por IA — revisar{% if tip.confianza %} ({{ tip.confianza }}){% endif %}</span>
-                                    {% elif tip.origen == "IA" and tip.revisada %}
-                                        <br><span class="tag green">✔ Revisado</span>
-                                    {% endif %}
-
-                                </td>
-
-                                <td>
-                                    {{ documento.nivel }}
-                                </td>
-
-                                <td>
-
-                                    {% if documento.estado == "Vigente" %}
-
-                                        <span class="tag green">
-                                            Vigente
-                                        </span>
-
-                                    {% elif documento.estado == "Pendiente de revisión" %}
-
-                                        <span class="tag yellow">
-                                            Pendiente
-                                        </span>
-
-                                    {% else %}
-
-                                        <span class="tag">
-                                            Archivado
-                                        </span>
-
-                                    {% endif %}
-
-                                </td>
-
-                                <td>
-
-                                    <div style="display:flex; gap:7px; flex-wrap:wrap;">
-
-                                        <button
-                                            class="secondary"
-                                            type="button"
-                                            {% if documento.procesamiento != "PROCESADO" %}disabled{% endif %}
-                                            onclick='verDocumento(
-                                                {{ documento.contenido_completo|tojson }},
-                                                {{ (documento.nombre or documento.archivo)|tojson }}
-                                            )'>
-                                            👁 Ver contenido
-                                        </button>
-
-                                        {% if documento.procesamiento == "ERROR" or documento.advertencia or documento.imagenes_con_error or (documento.simulado and not simulado) %}
-                                        <form action="/knowledge/reprocesar/{{ documento.id }}"
-                                              method="POST"
-                                              style="margin:0;">
-                                            <button class="secondary" type="submit">
-                                                🔄 Reprocesar
-                                            </button>
-                                        </form>
-                                        {% endif %}
-
-                                        <button
-                                            class="secondary"
-                                            type="button"
-                                            onclick='verInfoDocumento(
-                                                {{ documento.nombre|tojson }},
-                                                {{ documento.archivo|tojson }},
-                                                {{ documento.producto|tojson }},
-                                                {{ documento.categoria|tojson }},
-                                                {{ documento.subcategoria|tojson }},
-                                                {{ documento.nivel|tojson }},
-                                                {{ documento.estado|tojson }},
-                                                {{ documento.fuente|tojson }},
-                                                {{ documento.descripcion|tojson }}
-                                            )'>
-                                            Ver
-                                        </button>
-
-                                        {% set tip2 = documento.tipificacion or {} %}
-
-                                        {% if documento.procesamiento == "PROCESADO" and tip2.origen == "IA" and not tip2.revisada and not tip2.error and documento.estado == "Pendiente de revisión" %}
-                                        <form action="/knowledge/documento/{{ documento.id }}/confirmar"
-                                              method="POST"
-                                              style="margin:0;">
-                                            <button class="primary" type="submit"
-                                                    title="Confirma la tipificación y deja el documento Vigente">
-                                                ✔ Confirmar
-                                            </button>
-                                        </form>
-                                        {% endif %}
-
-                                        <button
-                                            class="secondary"
-                                            type="button"
-                                            onclick='editarDocumento(
-                                                {{ documento.id|tojson }},
-                                                {{ (documento.nombre or documento.archivo)|tojson }},
-                                                {{ documento.producto|tojson }},
-                                                {{ documento.categoria|tojson }},
-                                                {{ documento.subcategoria|tojson }},
-                                                {{ documento.nivel|tojson }},
-                                                {{ documento.estado|tojson }},
-                                                {{ documento.fuente|tojson }},
-                                                {{ documento.descripcion|tojson }}
-                                            )'>
-                                            ✏ Editar
-                                        </button>
-
-                                        {% if documento.procesamiento == "PROCESADO" %}
-                                        <form action="/knowledge/documento/{{ documento.id }}/tipificar"
-                                              method="POST"
-                                              style="margin:0;"
-                                              onsubmit="return confirm('La IA va a volver a decidir categoría, subcategoría, nivel, fuente y descripción (el estado no cambia). ¿Seguir?')">
-                                            <button class="secondary" type="submit">
-                                                🤖 Tipificar con IA
-                                            </button>
-                                        </form>
-                                        {% endif %}
-
-                                    </div>
-
-                                </td>
-
-                            </tr>
-
-                            {% endmacro %}
 <!DOCTYPE html>
 
 <html lang="es">
@@ -855,6 +677,11 @@
            class="{% if section == 'usuarios' %}active{% endif %}">
             👥 Usuarios
         </a>
+
+        <a href="/auditoria"
+           class="{% if section == 'auditoria' %}active{% endif %}">
+            🧾 Registro de cambios
+        </a>
         {% endif %}
 
         <a href="/cuenta"
@@ -898,6 +725,8 @@
             <h1>Playground</h1>
         {% elif section == "usuarios" %}
             <h1>Usuarios</h1>
+        {% elif section == "auditoria" %}
+            <h1>Registro de cambios</h1>
         {% elif section == "cuenta" %}
             <h1>Mi cuenta</h1>
         {% else %}
@@ -931,7 +760,7 @@
         {% endif %}
         {% endwith %}
 
-{% macro fila_doc(documento) %}
+{% macro fila_doc(documento, puede_editar) %}
 <tr class="kb-fila"
                                 data-producto="{{ documento.producto }}"
                                 data-categoria="{{ documento.categoria }}"
@@ -1032,7 +861,7 @@
                                             👁 Ver contenido
                                         </button>
 
-                                        {% if documento.procesamiento == "ERROR" or documento.advertencia or documento.imagenes_con_error or (documento.simulado and not simulado) %}
+                                        {% if puede_editar and (documento.procesamiento == "ERROR" or documento.advertencia or documento.imagenes_con_error or (documento.simulado and not simulado)) %}
                                         <form action="/knowledge/reprocesar/{{ documento.id }}"
                                               method="POST"
                                               style="margin:0;">
@@ -1061,7 +890,7 @@
 
                                         {% set tip2 = documento.tipificacion or {} %}
 
-                                        {% if documento.procesamiento == "PROCESADO" and tip2.origen == "IA" and not tip2.revisada and not tip2.error and documento.estado == "Pendiente de revisión" %}
+                                        {% if puede_editar and documento.procesamiento == "PROCESADO" and tip2.origen == "IA" and not tip2.revisada and not tip2.error and documento.estado == "Pendiente de revisión" %}
                                         <form action="/knowledge/documento/{{ documento.id }}/confirmar"
                                               method="POST"
                                               style="margin:0;">
@@ -1072,6 +901,7 @@
                                         </form>
                                         {% endif %}
 
+{% if puede_editar %}
                                         <button
                                             class="secondary"
                                             type="button"
@@ -1088,8 +918,9 @@
                                             )'>
                                             ✏ Editar
                                         </button>
+{% endif %}
 
-                                        {% if documento.procesamiento == "PROCESADO" %}
+                                        {% if puede_editar and documento.procesamiento == "PROCESADO" %}
                                         <form action="/knowledge/documento/{{ documento.id }}/tipificar"
                                               method="POST"
                                               style="margin:0;"
@@ -1106,6 +937,13 @@
 
                             </tr>
 {% endmacro %}
+
+        {% if usuario_actual and usuario_actual.rol == "analista" %}
+        <div class="card" style="border-left:4px solid #9ca3af; padding:12px 16px;">
+            <span class="tag gray">👁 Solo lectura</span>
+            <span class="muted">Tu usuario es de analista: podés ver todo y valorar conversaciones (👍 / 👎), pero no modificar nada.</span>
+        </div>
+        {% endif %}
 
         {% if section == None %}
 
@@ -1389,13 +1227,41 @@
                                     </div>
                                     <div style="margin-top:10px;">
                                         <label>Instrucciones propias de este agente</label>
-                                        <textarea name="instrucciones"
+                                        <textarea name="instrucciones" id="ins{{ a.id }}"
                                                   style="min-height:90px;"
                                                   placeholder="Ej. Preguntá siempre qué versión de Tienda Nube usa el cliente. No indiques cambios en la base de datos.">{{ a.instrucciones }}</textarea>
                                         <p class="muted" style="margin:6px 0 0;">
                                             Se suman a las reglas generales. No pueden desactivar las reglas
                                             estrictas (no inventar procedimientos, no tocar bases de datos, etc.).
                                         </p>
+
+                                        <div style="margin-top:12px;">
+                                            <strong>Valoración del equipo:</strong> 👍 {{ a.votos_pos }} · 👎 {{ a.votos_neg }}
+
+                                            {% if a.correcciones %}
+                                            <ul style="margin:8px 0 8px 18px; padding:0;">
+                                                {% for c in a.correcciones %}
+                                                <li><small>«{{ c.problema or "consulta" }}» → <strong>{{ c.correccion }}</strong> <span class="muted">({{ c.usuario }})</span></small></li>
+                                                {% endfor %}
+                                            </ul>
+
+                                            <button type="button" class="secondary" style="padding:6px 12px; font-size:12px;"
+                                                    onclick="sugerirInstrucciones({{ a.id }}, this)">
+                                                🤖 Sugerir mejora de instrucciones con IA
+                                            </button>
+
+                                            <div id="sugBox{{ a.id }}" style="display:none; margin-top:8px;">
+                                                <label>Propuesta (revisala y editala; todavía no se aplicó)</label>
+                                                <textarea id="sugTxt{{ a.id }}" style="min-height:110px;"></textarea>
+                                                <button type="button" class="primary" style="padding:6px 12px; font-size:12px; margin-top:6px;"
+                                                        onclick="usarSugerencia({{ a.id }})">
+                                                    Usar esta propuesta (después tocá «Guardar agente»)
+                                                </button>
+                                            </div>
+                                            {% else %}
+                                            <span class="muted"> · Sin correcciones todavía: se cargan con 👎 en Métricas → Últimas conversaciones.</span>
+                                            {% endif %}
+                                        </div>
                                     </div>
                                     <div class="buttons">
                                         <button type="submit" class="primary">Guardar agente</button>
@@ -1978,11 +1844,13 @@
 
                 </div>
 
+                {% if puede_editar %}
                 <button class="primary"
                         type="button"
                         onclick="upAbrir()">
                     + Agregar documento
                 </button>
+                {% endif %}
 
             </div>
 
@@ -2043,6 +1911,34 @@
                 </div>
 
             </div>
+
+        </div>
+
+
+        <div class="card" id="semantica">
+
+            <h3>Búsqueda semántica</h3>
+
+            {% if semantico.activa %}
+            <p class="muted">
+                <span class="tag green">Activa</span>
+                El agente busca por <strong>significado</strong> y no solo por palabras: «no me deja facturar» encuentra el manual del
+                «error de CAE». Fragmentos indexados: <strong>{{ semantico.indexados }} de {{ semantico.total }}</strong>
+                {% if semantico.modelo %}(modelo {{ semantico.modelo }}){% endif %}.
+                {% if semantico.motivo %}<br><small>{{ semantico.motivo }}</small>{% endif %}
+                Los documentos nuevos se indexan solos cuando terminan de procesarse.
+            </p>
+            {% else %}
+            <p class="muted">
+                <span class="tag yellow">Inactiva</span> El agente busca solo por palabras clave. {{ semantico.motivo }}
+            </p>
+            {% endif %}
+
+            {% if semantico.activa and usuario_actual and usuario_actual.rol == "admin" %}
+            <form method="POST" action="/embeddings/indexar" style="margin:0;">
+                <button type="submit" class="secondary">Indexar los documentos que falten</button>
+            </form>
+            {% endif %}
 
         </div>
 
@@ -2554,7 +2450,7 @@
 
                                     <tbody>
                                         {% for documento in sg.docs %}
-                                        {{ fila_doc(documento) }}
+                                        {{ fila_doc(documento, puede_editar) }}
                                         {% endfor %}
                                     </tbody>
 
@@ -2845,7 +2741,8 @@
                     <div>
                         <label>Rol</label>
                         <select name="rol">
-                            <option value="usuario" selected>Usuario</option>
+                            <option value="usuario" selected>Usuario (puede editar)</option>
+                            <option value="analista">Analista (solo lectura)</option>
                             <option value="admin">Administrador</option>
                         </select>
                     </div>
@@ -2889,6 +2786,8 @@
                             <td>
                                 {% if u.rol == "admin" %}
                                 <span class="tag">Administrador</span>
+                                {% elif u.rol == "analista" %}
+                                <span class="tag yellow">Analista (solo lectura)</span>
                                 {% else %}
                                 <span class="tag gray">Usuario</span>
                                 {% endif %}
@@ -2920,12 +2819,13 @@
                                 {% if usuario_actual and u.id != usuario_actual.id %}
                                 <div style="display:flex; gap:6px; flex-wrap:wrap;">
 
-                                    <form method="POST" action="/usuarios/{{ u.id }}/rol">
-                                        <input type="hidden" name="rol"
-                                               value="{{ 'usuario' if u.rol == 'admin' else 'admin' }}">
-                                        <button type="submit" class="secondary">
-                                            {{ 'Quitar admin' if u.rol == 'admin' else 'Hacer admin' }}
-                                        </button>
+                                    <form method="POST" action="/usuarios/{{ u.id }}/rol" style="display:flex; gap:4px;">
+                                        <select name="rol" style="width:auto; padding:6px;">
+                                            <option value="usuario" {% if u.rol == "usuario" %}selected{% endif %}>Usuario</option>
+                                            <option value="analista" {% if u.rol == "analista" %}selected{% endif %}>Analista</option>
+                                            <option value="admin" {% if u.rol == "admin" %}selected{% endif %}>Admin</option>
+                                        </select>
+                                        <button type="submit" class="secondary">Cambiar rol</button>
                                     </form>
 
                                     <form method="POST" action="/usuarios/{{ u.id }}/estado">
@@ -2964,7 +2864,7 @@
 
             <p class="muted">
                 Usuario: <strong>{{ usuario_actual.usuario }}</strong> ·
-                Rol: <strong>{{ "Administrador" if usuario_actual.rol == "admin" else "Usuario" }}</strong>
+                Rol: <strong>{{ {"admin": "Administrador", "analista": "Analista (solo lectura)"}.get(usuario_actual.rol, "Usuario") }}</strong>
             </p>
 
             <h3>Cambiar mi contraseña</h3>
@@ -3002,6 +2902,56 @@
             <p class="muted">El login está desactivado en este servidor.</p>
 
             {% endif %}
+
+        </div>
+
+
+        {% elif section == "auditoria" %}
+
+        <div class="card">
+
+            <h2>Registro de cambios</h2>
+
+            <p class="muted">
+                Quién hizo qué y cuándo: usuarios, agentes, tipificaciones, conexiones, documentos,
+                copias de seguridad e ingresos. Las contraseñas y credenciales nunca se guardan acá.
+                Horario en UTC.
+            </p>
+
+            <form method="GET" action="/auditoria" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:10px 0 14px;">
+                <select name="usuario" style="width:auto;">
+                    <option value="">Todos los usuarios</option>
+                    {% for u in usuarios_filtro %}
+                    <option {% if u == filtro_usuario %}selected{% endif %}>{{ u }}</option>
+                    {% endfor %}
+                </select>
+                <input type="text" name="q" value="{{ filtro_texto }}" placeholder="Buscar en la acción o el detalle" style="width:260px;">
+                <button type="submit" class="secondary">Filtrar</button>
+                <a class="button secondary" href="/auditoria.csv?usuario={{ filtro_usuario }}&q={{ filtro_texto }}">⬇ Descargar CSV</a>
+            </form>
+
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead>
+                        <tr><th>Fecha (UTC)</th><th>Usuario</th><th>Rol</th><th>Acción</th><th>Detalle</th><th>Resultado</th><th>IP</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for r in registros %}
+                        <tr>
+                            <td>{{ r.fecha.replace("T", " ") }}</td>
+                            <td><strong>{{ r.usuario or "-" }}</strong></td>
+                            <td>{{ r.rol or "-" }}</td>
+                            <td>{{ r.accion }}</td>
+                            <td style="max-width:360px; word-break:break-word;"><small>{{ r.detalle }}</small></td>
+                            <td><small>{{ r.resultado }}</small></td>
+                            <td><small>{{ r.ip }}</small></td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="7" class="muted">Todavía no hay registros.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
 
         </div>
 
@@ -3529,6 +3479,23 @@
                    class="button {{ 'primary' if canal == 'whatsapp' else 'secondary' }}">WhatsApp</a>
             </div>
 
+            <div class="buttons" style="margin-top:10px; align-items:center;">
+                <span class="muted">Período de los gráficos:</span>
+                {% for n in (7, 30, 90) %}
+                <a href="/metricas?canal={{ canal }}&dias={{ n }}"
+                   class="button {{ 'primary' if dias == n else 'secondary' }}" style="padding:6px 12px;">{{ n }} días</a>
+                {% endfor %}
+                <span class="muted" style="margin-left:14px;">Exportar:</span>
+                <a class="button secondary" style="padding:6px 12px;" href="/metricas/exportar.xlsx?dias={{ dias }}{% if canal != 'todos' %}&canal={{ canal }}{% endif %}">⬇ Excel</a>
+                <a class="button secondary" style="padding:6px 12px;" href="/metricas/exportar.csv?dias={{ dias }}{% if canal != 'todos' %}&canal={{ canal }}{% endif %}">⬇ CSV</a>
+            </div>
+
+            <p class="muted" style="margin:8px 0 0; font-size:12px;">
+                Para Power BI: <em>Obtener datos → Web</em> con
+                <code>/api/exportar/conversaciones.csv?dias=90</code> y el encabezado
+                <code>X-API-Key</code> (clave definida en <code>EXPORT_API_KEY</code>).
+            </p>
+
         </div>
 
 
@@ -3562,6 +3529,169 @@
             <div class="stat">
                 <div class="stat-number">{{ m.en_curso }}</div>
                 <div class="stat-label">En curso / sin cerrar</div>
+            </div>
+
+        </div>
+
+
+        <div class="grid-4" style="margin-bottom:20px;">
+
+            <div class="stat">
+                <div class="stat-number">{{ (avanzadas.min_mediana ~ " min") if avanzadas.min_mediana is not none else "—" }}</div>
+                <div class="stat-label">Mediana de resolución<br><small>(de {{ avanzadas.resueltas_n }} resueltas por IA, últimos {{ dias }} días)</small></div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-number">USD {{ avanzadas.costo_usd }}</div>
+                <div class="stat-label">Costo estimado de IA ({{ dias }} días)<br><small>entrada USD {{ precios_ia[0] }} / salida USD {{ precios_ia[1] }} por millón de tokens</small></div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-number">USD {{ avanzadas.costo_por_conversacion }}</div>
+                <div class="stat-label">Costo por conversación<br><small>{{ avanzadas.tokens_in + avanzadas.tokens_out }} tokens en total</small></div>
+            </div>
+
+            <div class="stat">
+                <div class="stat-number">{{ avanzadas.ia_fallos }}</div>
+                <div class="stat-label">Casos derivados por falla de la IA</div>
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
+            <h3>Consultas por día (últimos {{ dias }} días)</h3>
+
+            <div style="font-size:12px; margin:4px 0 8px;">
+                <span style="color:#16a34a;">■</span> Resueltas por IA &nbsp;
+                <span style="color:#f59e0b;">■</span> Derivadas &nbsp;
+                <span style="color:#9ca3af;">■</span> En curso
+            </div>
+
+            {{ grafico_dias }}
+
+            <h3 style="margin-top:20px;">Resolución por IA, por producto</h3>
+
+            {% if grafico_productos %}{{ grafico_productos }}{% else %}<p class="muted">Todavía no hay conversaciones.</p>{% endif %}
+
+        </div>
+
+
+        <div class="card" id="brechas">
+
+            <h3>Brechas de la Knowledge Base</h3>
+
+            <p class="muted">
+                Consultas que el agente <strong>no pudo resolver por falta de documentación</strong>
+                (últimos {{ dias }} días), por producto y tipificación. Es la lista de manuales que faltan escribir.
+                No incluye los casos en que el cliente pidió una persona ni las fallas de la IA.
+            </p>
+
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead>
+                        <tr><th>Producto</th><th>Tipificación</th><th>Consultas sin resolver</th><th>👎</th><th>Ejemplos de lo que preguntan</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for b in brechas %}
+                        <tr>
+                            <td>{{ b.producto }}</td>
+                            <td>{{ b.categoria }}{% if b.subcategoria %}<br><small>{{ b.subcategoria }}</small>{% endif %}</td>
+                            <td><strong>{{ b.consultas }}</strong><br><small>última: {{ b.ultima }}</small></td>
+                            <td>{{ b.negativas }}</td>
+                            <td><small>{% for e in b.ejemplos %}• {{ e }}<br>{% endfor %}</small></td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="5" class="muted">Sin brechas en este período: el agente encontró documentación para lo que le consultaron.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+
+
+        <div class="card" id="alertas">
+
+            <h3>Alertas a TI</h3>
+
+            <p class="muted">
+                Se avisa cuando <strong>{{ umbral_alerta }} o más clientes</strong> consultan por lo mismo en
+                {{ ventana_alerta }} minutos, cuando la IA falla (sin crédito, caída, lenta) y cuando se supera
+                el tope de gasto diario.
+                Canales:
+                <span class="tag {{ 'green' if canales_alerta.webhook else 'gray' }}">Webhook {{ 'activo' if canales_alerta.webhook else 'sin configurar' }}</span>
+                <span class="tag {{ 'green' if canales_alerta.email else 'gray' }}">Mail {{ 'activo (' ~ canales_alerta.destinatarios|length ~ ')' if canales_alerta.email else 'sin configurar' }}</span>
+                {% if not canales_alerta.webhook and not canales_alerta.email %}
+                <br><small>Configurá <code>ALERTA_WEBHOOK_URL</code> (Slack / Teams / Google Chat) y/o
+                <code>ALERTA_EMAILS</code> con <code>SMTP_HOST</code> en Render para recibirlas. Mientras tanto quedan acá.</small>
+                {% endif %}
+            </p>
+
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead><tr><th>Fecha (UTC)</th><th>Tipo</th><th>Alerta</th><th>Enviada por</th></tr></thead>
+                    <tbody>
+                        {% for a in alertas %}
+                        <tr>
+                            <td>{{ a.fecha.replace("T", " ") }}</td>
+                            <td><span class="tag {{ 'yellow' if a.tipo == 'incidente' else 'gray' }}">{{ a.tipo }}</span></td>
+                            <td><strong>{{ a.titulo }}</strong><br><small style="white-space:pre-line;">{{ a.detalle }}</small></td>
+                            <td>{{ a.enviada or "—" }}{% if a.error %}<br><small>⚠ {{ a.error }}</small>{% endif %}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="4" class="muted">Todavía no hubo alertas.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+
+
+        <div class="card" id="reportes">
+
+            <h3>Reporte semanal de resolución por IA</h3>
+
+            <p class="muted">
+                Se genera y se envía solo los <strong>lunes a las 08:00 (hora de Argentina)</strong> con la semana anterior:
+                consultas de soporte, resueltas solo por IA y % de resolución, más el Excel adjunto. Destinos:
+                <code>REPORTE_EMAILS</code> / <code>REPORTE_WEBHOOK_URL</code> (si no están, usa los de las alertas).
+            </p>
+
+            {% if usuario_actual and usuario_actual.rol == "admin" %}
+            <form method="POST" action="/reportes/generar" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:12px;">
+                <select name="modo" style="width:auto;">
+                    <option value="semana_anterior">Semana anterior (lunes a domingo)</option>
+                    <option value="ultimos7">Últimos 7 días</option>
+                </select>
+                <label style="display:flex; gap:6px; align-items:center; font-size:12px;">
+                    <input type="checkbox" name="enviar" value="1" style="width:auto;"> Enviarlo ahora por los canales configurados
+                </label>
+                <button type="submit" class="primary" style="padding:8px 14px;">Generar reporte</button>
+            </form>
+            {% endif %}
+
+            <div style="overflow-x:auto;">
+                <table class="routing-table">
+                    <thead><tr><th>Período (ARG)</th><th>Consultas</th><th>Resueltas por IA</th><th>% IA</th><th>Derivadas</th><th>Enviado</th><th>Excel</th></tr></thead>
+                    <tbody>
+                        {% for r in reportes %}
+                        <tr>
+                            <td>{{ r.datos.periodo_desde }} → {{ r.datos.periodo_hasta }}{% if r.automatico %} <span class="tag gray">automático</span>{% endif %}</td>
+                            <td>{{ r.datos.consultas }}</td>
+                            <td>{{ r.datos.resueltas_por_ia }}</td>
+                            <td><strong>{{ r.datos.pct_resolucion_ia }}%</strong></td>
+                            <td>{{ r.datos.derivadas }}</td>
+                            <td><small>{{ r.envio or "—" }}</small></td>
+                            <td><a href="/reportes/{{ r.id }}/descargar.xlsx">⬇ Descargar</a></td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="7" class="muted">Todavía no se generó ningún reporte.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
 
         </div>
@@ -3835,9 +3965,14 @@
         </div>
 
 
-        <div class="card">
+        <div class="card" id="conversaciones">
 
             <h3>Últimas conversaciones</h3>
+
+            <p class="muted" style="margin:0 0 8px;">
+                Valorá las respuestas del agente: 👍 si estuvo bien; 👎 si no, y contá qué debió responder o hacer.
+                Esas correcciones aparecen en la configuración de cada agente para mejorar sus instrucciones.
+            </p>
 
             <div style="overflow-x:auto;">
                 <table class="routing-table">
@@ -3851,6 +3986,7 @@
                             <th>Consulta</th>
                             <th>Estado</th>
                             <th>Mensajes</th>
+                            <th>Valoración</th>
                             <th>Acciones</th>
                         </tr>
                     </thead>
@@ -3874,6 +4010,21 @@
                             </td>
                             <td>{{ c.mensajes }}</td>
                             <td>
+                                <div style="display:flex; gap:4px; align-items:center;">
+                                    <form method="POST" action="/valoraciones/{{ c.id }}" style="margin:0;">
+                                        <input type="hidden" name="voto" value="1">
+                                        <button type="submit" class="secondary" style="padding:4px 8px;" title="La respuesta estuvo bien">👍</button>
+                                    </form>
+                                    <form method="POST" action="/valoraciones/{{ c.id }}" style="margin:0;"
+                                          onsubmit="var t = prompt('¿Qué debió responder o hacer el agente?'); if (t === null) { return false; } this.correccion.value = t; return true;">
+                                        <input type="hidden" name="voto" value="-1">
+                                        <input type="hidden" name="correccion" value="">
+                                        <button type="submit" class="secondary" style="padding:4px 8px;" title="La respuesta estuvo mal: contá qué debió hacer">👎</button>
+                                    </form>
+                                    <small class="muted">{{ c.votos_pos }}👍 {{ c.votos_neg }}👎</small>
+                                </div>
+                            </td>
+                            <td>
                                 <button class="secondary"
                                         type="button"
                                         onclick='verDocumento(
@@ -3885,7 +4036,7 @@
                             </td>
                         </tr>
                         {% else %}
-                        <tr><td colspan="9" class="muted">Todavía no hay conversaciones guardadas.</td></tr>
+                        <tr><td colspan="10" class="muted">Todavía no hay conversaciones guardadas.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -4086,6 +4237,38 @@
                 return div;
             }
 
+
+            // Capturas de los manuales que acompañan la respuesta (como las recibiría el cliente)
+            function pgAgregarImagenes(imagenes) {
+
+                (imagenes || []).forEach(function (img) {
+
+                    var div = document.createElement("div");
+
+                    div.className = "pg-msg agente";
+
+                    var foto = document.createElement("img");
+
+                    foto.src = img.url;
+                    foto.alt = img.descripcion;
+                    foto.style.maxWidth = "100%";
+                    foto.style.borderRadius = "6px";
+
+                    var pie = document.createElement("div");
+
+                    pie.style.fontSize = "11px";
+                    pie.style.opacity = "0.7";
+                    pie.textContent = "📎 " + img.documento;
+
+                    div.appendChild(foto);
+                    div.appendChild(pie);
+
+                    var caja = document.getElementById("pgChat");
+
+                    caja.appendChild(div);
+                    caja.scrollTop = caja.scrollHeight;
+                });
+            }
 
             function pgFila(titulo, valor) {
 
@@ -4332,6 +4515,7 @@
                     } else {
 
                         pgAgregar("agente", datos.respuesta);
+                        pgAgregarImagenes(datos.imagenes);
 
                         pgHistorial.push({rol: "cliente", texto: texto});
                         pgHistorial.push({rol: "agente", texto: datos.respuesta});
@@ -4559,6 +4743,35 @@
     }
 
     document.addEventListener("DOMContentLoaded", function () { kbFiltrar(true); });
+
+    // Pide a la IA una propuesta de instrucciones a partir de las correcciones
+    function sugerirInstrucciones(id, boton) {
+
+        boton.disabled = true;
+        boton.textContent = "Pensando...";
+
+        fetch("/agentes/" + id + "/sugerir", {method: "POST"})
+            .then(function (r) { return r.json(); })
+            .then(function (datos) {
+
+                boton.disabled = false;
+                boton.textContent = "🤖 Sugerir mejora de instrucciones con IA";
+
+                if (datos.error) { alert(datos.error); return; }
+
+                document.getElementById("sugTxt" + id).value = datos.sugerencia;
+                document.getElementById("sugBox" + id).style.display = "block";
+            })
+            .catch(function () {
+                boton.disabled = false;
+                boton.textContent = "🤖 Sugerir mejora de instrucciones con IA";
+                alert("No se pudo consultar a la IA.");
+            });
+    }
+
+    function usarSugerencia(id) {
+        document.getElementById("ins" + id).value = document.getElementById("sugTxt" + id).value;
+    }
 
     function editProductoCambio() {
 
