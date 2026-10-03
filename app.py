@@ -416,7 +416,7 @@ def documentos_para_vista():
         # Evita errores en la plantilla si a un documento le falta algún campo
         for campo in (
             "nombre", "archivo", "producto", "categoria", "subcategoria",
-            "nivel", "estado", "fuente", "descripcion", "texto_extraido"
+            "estado", "fuente", "descripcion", "texto_extraido"
         ):
             if copia.get(campo) is None:
                 copia[campo] = ""
@@ -1315,7 +1315,7 @@ def cobertura_kb():
     """
     Cuánta documentación usable tiene cada agente.
 
-    - "usables": documentos Vigentes, procesados, de nivel L1/Todos y del
+    - "usables": documentos Vigentes, procesados y del
       producto (o compartidos), que es lo que el agente puede usar.
     - por tipificación: cuántos de esos son de esa categoría.
     - "sin_categoria_valida": documentos del producto que no tienen ninguna
@@ -1448,7 +1448,7 @@ def _ahora_iso():
 
 
 CAMPOS_TIPIFICABLES = (
-    "producto", "categoria", "subcategoria", "nivel", "fuente", "descripcion"
+    "producto", "categoria", "subcategoria", "fuente", "descripcion"
 )
 
 
@@ -1646,7 +1646,6 @@ class SyncHost:
             "producto": datos["producto"],
             "categoria": "",
             "subcategoria": "",
-            "nivel": "L1",
             "estado": estado,
             "fuente": "Otro",
             "descripcion": "",
@@ -2433,7 +2432,7 @@ def retipificar_pendientes():
     """
     Vuelve a tipificar con IA la categoría y subcategoría de los documentos
     cuyo producto tiene tipificaciones pero cuya categoría actual no es
-    ninguna de ellas. No toca nivel, fuente, descripción ni estado.
+    ninguna de ellas. No toca fuente, descripción ni estado.
     """
 
     tareas = []
@@ -3358,7 +3357,7 @@ def knowledge_upload():
     campos = {
         nombre: request.form.getlist(nombre)
         for nombre in (
-            "producto", "categoria", "subcategoria", "nivel",
+            "producto", "categoria", "subcategoria",
             "estado", "fuente", "descripcion"
         )
     }
@@ -3416,7 +3415,7 @@ def knowledge_upload():
         valores = {
             nombre_campo: _valor_de_lista(campos[nombre_campo], indice)
             for nombre_campo in (
-                "categoria", "subcategoria", "nivel", "fuente", "descripcion"
+                "categoria", "subcategoria", "fuente", "descripcion"
             )
         }
 
@@ -3448,7 +3447,6 @@ def knowledge_upload():
             "producto": agent_service.normalizar_producto(producto, producto),
             "categoria": valores["categoria"],
             "subcategoria": valores["subcategoria"],
-            "nivel": valores["nivel"],
             "estado": estado_elegido,
             "fuente": valores["fuente"],
             "descripcion": valores["descripcion"],
@@ -4105,7 +4103,6 @@ def knowledge_editar(doc_id):
     producto = agent_service.normalizar_producto(campo("producto"), "")
 
     categoria = campo("categoria")
-    nivel = campo("nivel")
     estado = campo("estado")
     fuente = campo("fuente")
 
@@ -4128,7 +4125,6 @@ def knowledge_editar(doc_id):
         "producto": producto,
         "categoria": categoria if categoria in validas else "",
         "subcategoria": campo("subcategoria")[:80],
-        "nivel": nivel if nivel in tipificador_service.NIVELES else "",
         "estado": estado,
         "fuente": fuente if fuente in tipificador_service.FUENTES else "",
         "descripcion": campo("descripcion")[:600],
