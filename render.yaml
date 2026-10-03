@@ -39,3 +39,24 @@ services:
         sync: false
       - key: FLASK_SECRET_KEY
         generateValue: true
+      # --- Alertas a TI y reporte semanal (opcionales, se cargan a mano) ---
+      - key: ALERTA_WEBHOOK_URL
+        sync: false
+      - key: ALERTA_EMAILS
+        sync: false
+      - key: REPORTE_EMAILS
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USUARIO
+        sync: false
+      - key: SMTP_CLAVE
+        sync: false
+      - key: SMTP_REMITENTE
+        sync: false
+      # --- Power BI / Excel: clave para /api/exportar/... ---
+      - key: EXPORT_API_KEY
+        sync: false
+      # --- Límite de gasto diario de IA en USD (0 = sin tope) ---
+      - key: GASTO_DIARIO_MAX_USD
+        value: "0"
